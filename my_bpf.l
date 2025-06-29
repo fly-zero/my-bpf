@@ -10,10 +10,16 @@
 
 %%
 
-"sport" { yylval = strdup(yytext); return SRC_PORT; }
-"=="    { return EQUAL; }
-[0-9]+  { yylval = strdup(yytext); return NUMBER; }
-[ \t]   { };
+"sip"   { yylval = yytext; return FIELD; }
+"dip"   { yylval = yytext; return FIELD; }
+"sport" { yylval = yytext; return FIELD; }
+"dport" { yylval = yytext; return FIELD; }
+"=="    { yylval = yytext; return COMPARISON; }
+"!="    { yylval = yytext; return COMPARISON; }
+"&&"    { yylval = yytext; return LOGICAL; }
+"||"    { yylval = yytext; return LOGICAL; }
+[0-9]+  { yylval = yytext; return NUMBER; }
+[ \t]   { }
 [\n]    { return 0; }
 
 %%

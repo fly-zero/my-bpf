@@ -1,6 +1,6 @@
 all: bpf
 
-bpf: my_bpf.yy.c my_bpf.tab.c
+bpf: my_bpf.yy.c my_bpf.tab.c syntax.c
 	gcc -o $@ -g3 $^
 
 %.yy.c: %.l
