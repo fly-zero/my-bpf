@@ -66,10 +66,15 @@ struct bpf_syntax_node *bpf_syntax_node_new(enum bpf_syntax_node_type type, char
 
 /**
  * @brief 后序遍历语法树
+ *
+ * @param node 语法树根节点
+ * @param callback 回调函数，处理每个节点，当返回值为 0 时继续遍历，为 -1 时停止遍历
+ * @param arg 回调函数的参数
+ * @return int 0 成功遍历；-1 遍历被中断
  */
-void bpf_syntax_tree_post_order(struct bpf_syntax_node *node,
-                                void (*callback)(struct bpf_syntax_node *node, void *arg),
-                                void *arg);
+int bpf_syntax_tree_post_order(struct bpf_syntax_node *node,
+                               int (*callback)(struct bpf_syntax_node *, void *),
+                               void *arg);
 
 /**
  * @brief 生成 BPF 汇编

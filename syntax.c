@@ -44,7 +44,15 @@ struct bpf_syntax_field_node {
  * @brief 寄存器编号到名称的映射
  */
 static const char *s_bpf_register_names[] = {
-    "CR", "R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7",
+    "CR",
+    "R0",
+    "R1",
+    "R2",
+    "R3",
+    "R4",
+    "R5",
+    "R6",
+    "R7",
 };
 
 static struct bpf_list_node s_bpf_field_attr_list = {
@@ -59,7 +67,7 @@ static const char *bpf_register_name(int reg) {
     return s_bpf_register_names[reg];  // 返回寄存器名称
 }
 
-static int register_usage_get_free(struct bpf_register_usage *reg_usage) {
+static int bpf_register_usage_get_free(struct bpf_register_usage *reg_usage) {
     // 查找第一个未使用的寄存器
     for (int i = 0; i < 64; i++) {
         uint64_t mask = 1ULL << i;
@@ -108,7 +116,7 @@ static int bpf_argn_to_reg(uint8_t argn) {
  *
  * @param reg_usage 寄存器使用情况
  * @param field 字段名称
- * @return 返回寄存器编号，-1 表示没有可用寄存器
+ * @return 成功时返回 0，失败时返回 -1
  */
 static int bpf_node_asm_field(struct bpf_register_usage *reg_usage, struct bpf_syntax_node *node) {
     assert(node->type == BPF_SYNTAX_NODE_FIELD);
@@ -116,10 +124,10 @@ static int bpf_node_asm_field(struct bpf_register_usage *reg_usage, struct bpf_s
     struct bpf_syntax_field_node *field = (struct bpf_syntax_field_node *)node;
 
     // 从 reg_usage 找出可用的寄存器
-    int reg = register_usage_get_free(reg_usage);
+    int reg = bpf_register_usage_get_free(reg_usage);
     if (reg < 0) {
         fprintf(stderr, "No available registers for field: %s\n", node->str);
-        return BPF_REGISTER_INVALID;
+        return -1;
     }
 
     const struct bpf_syntax_field_attr *attr = field->attr;
@@ -129,8 +137,9 @@ static int bpf_node_asm_field(struct bpf_register_usage *reg_usage, struct bpf_s
            bpf_register_name(bpf_argn_to_reg(attr->argn)),
            attr->offset,
            attr->size,
-           reg);  // 加载字段到寄存器
-    return reg;   // 返回寄存器编号
+           reg);      // 加载字段到寄存器
+    node->reg = reg;  // 设置结点的寄存器编号
+    return 0;
 }
 
 /**
@@ -142,7 +151,7 @@ static int bpf_node_asm_field(struct bpf_register_usage *reg_usage, struct bpf_s
  */
 static int bpf_node_asm_constant(struct bpf_register_usage *reg_usage, const char *constant) {
     // 从 reg_usage 找出可用的寄存器
-    int reg = register_usage_get_free(reg_usage);
+    int reg = bpf_register_usage_get_free(reg_usage);
     if (reg < 0) {
         fprintf(stderr, "No available registers for constant: %s\n", constant);
         return BPF_REGISTER_INVALID;
@@ -189,34 +198,30 @@ static void bpf_node_asm_right_sub_expression(struct bpf_register_usage    *reg_
     printf("%16s: cs -> r0\n", "mov");
 }
 
-static void bpf_node_asm(struct bpf_syntax_node *node, void *arg) {
+static int bpf_node_asm(struct bpf_syntax_node *node, void *arg) {
     struct bpf_register_usage *reg_usage = (struct bpf_register_usage *)arg;
 
     switch (node->type) {
-    case BPF_SYNTAX_NODE_INVALID:
-        fprintf(stderr, "Invalid node\n");
-        break;
     case BPF_SYNTAX_NODE_OPERATOR_COMPARISON:
         node->reg = bpf_node_asm_operator_comparison(
             reg_usage, node->str, node->left->reg, node->right->reg);
-        break;
+        return 0;
     case BPF_SYNTAX_NODE_FIELD:
-        node->reg = bpf_node_asm_field(reg_usage, node);
-        break;
+        return bpf_node_asm_field(reg_usage, node);
     case BPF_SYNTAX_NODE_CONSTANT:
         node->reg = bpf_node_asm_constant(reg_usage, node->str);
-        break;
+        return 0;
     case BPF_SYNTAX_NODE_JUMP_IF:
         bpf_node_asm_jump_if(reg_usage, node);
-        break;
+        return 0;
     case BPF_SYNTAX_NODE_JUMP_LABEL:
-        break;
+        return 0;
     case BPF_SYNTAX_NODE_RIGHT_SUB_EXPRESSION:
         bpf_node_asm_right_sub_expression(reg_usage, node);
-        break;
+        return 0;
     default:
-        fprintf(stderr, "Unknown node type\n");
-        break;
+        fprintf(stderr, "Invalid node\n");
+        return -1;
     }
 }
 
@@ -310,16 +315,22 @@ struct bpf_syntax_node *bpf_syntax_node_new(enum bpf_syntax_node_type type, char
     }
 }
 
-void bpf_syntax_tree_post_order(struct bpf_syntax_node *node,
-                                void (*callback)(struct bpf_syntax_node *node, void *arg),
-                                void *arg) {
+int bpf_syntax_tree_post_order(struct bpf_syntax_node *node,
+                               int (*callback)(struct bpf_syntax_node *, void *),
+                               void *arg) {
     if (!node) {
-        return;
+        return -1;
     }
 
-    bpf_syntax_tree_post_order(node->left, callback, arg);
-    bpf_syntax_tree_post_order(node->right, callback, arg);
-    callback(node, arg);
+    if (bpf_syntax_tree_post_order(node->left, callback, arg) < 0) {
+        return -1;
+    }
+
+    if (bpf_syntax_tree_post_order(node->right, callback, arg) < 0) {
+        return -1;
+    }
+
+    return callback(node, arg);
 }
 
 void bpf_syntax_asm(struct bpf_syntax_node *node) {
