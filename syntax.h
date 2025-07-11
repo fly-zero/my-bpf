@@ -45,6 +45,17 @@ struct bpf_syntax_tree {
 };
 
 /**
+ * @brief 注册字段
+ *
+ * @param name 字段名称
+ * @param argn 字段从第几个参数传入
+ * @param size 字段大小
+ * @param offset 字段在参数中的偏移量
+ * @return int 0 成功，-1 失败
+ */
+int bpf_syntax_register_field(const char *name, uint8_t argn, uint8_t size, uint32_t offset);
+
+/**
  * @brief 创建一个新的 BPF 语法节点
  *
  * @param type 结点类型

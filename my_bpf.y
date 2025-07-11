@@ -73,15 +73,20 @@ static void print_syntax_tree(struct bpf_syntax_node *node, int depth)
     bpf_syntax_asm(node); // 生成 BPF 汇编
 }
 
+static void register_global_field() {
+    // 注册全局字段
+    bpf_syntax_register_field("sport", 0, 2, 0);
+    bpf_syntax_register_field("dport", 0, 2, 2);
+}
+
 int main()
 {
-    printf("BPF Filter Parser\n");
-    printf("Enter filter expression:\n");
-    
+    register_global_field(); // 注册全局字段
+
     if (yyparse() == 0) {
         printf("\nParsing successful!\n");
         if (parse_result) {
-            printf("Syntax tree:\n");
+            printf("ASM:\n");
             print_syntax_tree(parse_result, 0);
         }
     } else {
