@@ -6,6 +6,8 @@
 
 extern int yylex();
 
+extern int yylex_destroy();  // 添加词法分析器清理函数声明
+
 static void yyerror(const char *);
 
 static void print_syntax_tree(struct bpf_syntax_node *node, int depth);
@@ -53,6 +55,9 @@ expr
     $3->parent = right_expr;
 
     $$ = right_expr;
+}
+| factor {
+    $$ = $1;
 };
 
 factor
@@ -120,8 +125,18 @@ int main() {
         printf("Parsing failed!\n");
     }
 
+    // 释放语法树
+    if (parse_result) {
+        bpf_syntax_node_free(context, parse_result);
+        parse_result = NULL;
+    }
+
     // 释放编译上下文
     bpf_compilation_context_free(context);
+    context = NULL;
+
+    // 清理词法分析器分配的缓冲区
+    yylex_destroy();
 
     return 0;
 }

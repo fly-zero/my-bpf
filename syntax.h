@@ -91,6 +91,12 @@ struct bpf_syntax_node *bpf_syntax_node_new(struct bpf_compilation_context *cont
                                             char                           *str);
 
 /**
+ * @brief 释放 BPF 语法节点
+ * @param node 结点指针
+ */
+void bpf_syntax_node_free(struct bpf_compilation_context *context, struct bpf_syntax_node *node);
+
+/**
  * @brief 后序遍历语法树
  *
  * @param node 语法树根节点

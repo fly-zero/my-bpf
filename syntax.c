@@ -6,8 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define bpf_container_of(ptr, type, member) \
-    ((type *)((char *)(ptr)-offsetof(type, member)))
+#define bpf_container_of(ptr, type, member) ((type *)((char *)(ptr)-offsetof(type, member)))
 
 /**
  * @brief 链表节点结构体
@@ -86,6 +85,12 @@ static void bpf_list_append(struct bpf_list_node *list, struct bpf_list_node *no
     node->next       = list;
     list->prev->next = node;
     list->prev       = node;
+}
+
+static void bpf_list_unlink(struct bpf_list_node *node) {
+    // 从链表中移除节点
+    node->prev->next = node->next;
+    node->next->prev = node->prev;
 }
 
 static const char *bpf_register_name(int reg) {
@@ -348,6 +353,23 @@ static int bpf_node_asm(struct bpf_compilation_context *context, struct bpf_synt
     }
 }
 
+static int bpf_node_free(struct bpf_compilation_context *context, struct bpf_syntax_node *node) {
+    if (!node) {
+        return 0;  // 如果节点为空，直接返回
+    }
+
+    // 从待处理标签列表中移除
+    if (node->type == BPF_SYNTAX_NODE_LABEL) {
+        struct bpf_syntax_label_node *label = (struct bpf_syntax_label_node *)node;
+        bpf_list_unlink(&label->list_hook);
+    }
+
+    // 释放当前节点的字符串表示
+    free(node->str);
+    free(node);
+    return 0;
+}
+
 const struct bpf_syntax_field_attr *bpf_field_attr_find(const char *name) {
     // 在全局字段链表中查找字段属性
     for (struct bpf_list_node *node = s_bpf_field_attr_list.next; node != &s_bpf_field_attr_list;
@@ -494,6 +516,10 @@ struct bpf_syntax_node *bpf_syntax_node_new(struct bpf_compilation_context *cont
     }
 }
 
+void bpf_syntax_node_free(struct bpf_compilation_context *context, struct bpf_syntax_node *node) {
+    bpf_syntax_tree_post_order(node, bpf_node_free, context);
+}
+
 int bpf_syntax_tree_post_order(struct bpf_syntax_node *node,
                                int (*callback)(struct bpf_compilation_context *,
                                                struct bpf_syntax_node *),
@@ -525,9 +551,11 @@ void bpf_syntax_asm(struct bpf_compilation_context *context, struct bpf_syntax_n
     printf("%04hx: %-8s\n", bpf_asm_next_pc(context), "ret");
 
     // 打印 label 的跳转目标
-    for (struct bpf_list_node *node = context->pending_labels.next; node != &context->pending_labels;
+    for (struct bpf_list_node *node = context->pending_labels.next;
+         node != &context->pending_labels;
          node = node->next) {
-        struct bpf_syntax_label_node *label = bpf_container_of(node, struct bpf_syntax_label_node, list_hook);
+        struct bpf_syntax_label_node *label =
+            bpf_container_of(node, struct bpf_syntax_label_node, list_hook);
         assert(label->node.type == BPF_SYNTAX_NODE_LABEL);
         assert(label->target);
         struct bpf_syntax_node *left_most = bpf_syntax_true_left_most(label->target);

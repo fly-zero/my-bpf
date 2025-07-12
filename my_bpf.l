@@ -8,6 +8,8 @@
 
 %}
 
+%option noyywrap
+
 %%
 
 "("     { return '('; }
@@ -25,8 +27,3 @@
 [\n]    { return 0; }
 
 %%
-
-int yywrap()
-{
-	return 1;
-}
