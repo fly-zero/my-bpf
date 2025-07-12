@@ -8,13 +8,13 @@ extern "C" {
 #endif
 
 enum bpf_syntax_node_type {
-    BPF_SYNTAX_NODE_INVALID = 0,          ///< 无效节点
-    BPF_SYNTAX_NODE_OPERATOR_COMPARISON,  ///< 比较运算符节点
-    BPF_SYNTAX_NODE_FIELD,                ///< 字段节点
-    BPF_SYNTAX_NODE_CONSTANT,             ///< 常量节点
-    BPF_SYNTAX_NODE_JUMP_IF,     ///< 条件跳转节点，左为条件，右为跳转目标
-    BPF_SYNTAX_NODE_JUMP_LABEL,  ///< 跳转标签节点
-    BPF_SYNTAX_NODE_RIGHT_SUB_EXPRESSION,  ///< 右子表达式节点
+    BPF_SYNTAX_NODE_INVALID = 0,     ///< 无效节点
+    BPF_SYNTAX_NODE_COMPARISON,      ///< 比较运算符节点
+    BPF_SYNTAX_NODE_FIELD,           ///< 字段节点
+    BPF_SYNTAX_NODE_CONSTANT,        ///< 常量节点
+    BPF_SYNTAX_NODE_JUMP_IF,         ///< 条件跳转节点，左为条件，右为跳转目标
+    BPF_SYNTAX_NODE_LABEL,           ///< 跳转标签节点
+    BPF_SYNTAX_NODE_RIGHT_SUB_EXPR,  ///< 右子表达式节点
 };
 
 enum {
@@ -41,6 +41,7 @@ enum {
 struct bpf_syntax_node {
     enum bpf_syntax_node_type type;    ///< 节点类型
     uint8_t                   reg;     ///< 寄存器，-1 表示未分配寄存器
+    uint16_t                  pc;      ///< 当前结生成汇编的程序计数器
     char                     *str;     ///< 节点字符串表示
     struct bpf_syntax_node   *parent;  ///< 父节点
     struct bpf_syntax_node   *left;    ///< 左子节点
@@ -51,6 +52,20 @@ struct bpf_syntax_tree {
     struct bpf_syntax_node *root;
     size_t                  node_count;
 };
+
+struct bpf_compilation_context;
+
+/**
+ * @brief 分配编译上下文
+ */
+struct bpf_compilation_context *bpf_compilation_context_new();
+
+/**
+ * @brief 释放编译上下文
+ *
+ * @param context 编译上下文
+ */
+void bpf_compilation_context_free(struct bpf_compilation_context *context);
 
 /**
  * @brief 注册字段
@@ -66,11 +81,14 @@ int bpf_syntax_register_field(const char *name, uint8_t argn, uint8_t size, uint
 /**
  * @brief 创建一个新的 BPF 语法节点
  *
+ * @param context 编译上下文
  * @param type 结点类型
  * @param str 结点字符串表示
  * @return struct bpf_syntax_node* 结点指针
  */
-struct bpf_syntax_node *bpf_syntax_node_new(enum bpf_syntax_node_type type, char *str);
+struct bpf_syntax_node *bpf_syntax_node_new(struct bpf_compilation_context *context,
+                                            enum bpf_syntax_node_type       type,
+                                            char                           *str);
 
 /**
  * @brief 后序遍历语法树
@@ -81,13 +99,17 @@ struct bpf_syntax_node *bpf_syntax_node_new(enum bpf_syntax_node_type type, char
  * @return int 0 成功遍历；-1 遍历被中断
  */
 int bpf_syntax_tree_post_order(struct bpf_syntax_node *node,
-                               int (*callback)(struct bpf_syntax_node *, void *),
-                               void *arg);
+                               int (*callback)(struct bpf_compilation_context *,
+                                               struct bpf_syntax_node *),
+                               struct bpf_compilation_context *ctx);
 
 /**
  * @brief 生成 BPF 汇编
+ *
+ * @param context 编译上下文
+ * @param node 语法树根节点
  */
-void bpf_syntax_asm(struct bpf_syntax_node *node);
+void bpf_syntax_asm(struct bpf_compilation_context *context, struct bpf_syntax_node *node);
 
 #ifdef __cplusplus
 }
