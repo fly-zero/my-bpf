@@ -94,7 +94,7 @@ int bpf_syntax_tree_post_order(struct bpf_syntax_node *node,
  * @param context 编译上下文
  * @param node 语法树根节点
  */
-void bpf_syntax_asm(struct bpf_compilation_context *context, struct bpf_syntax_node *node);
+void bpf_asm(struct bpf_compilation_context *context, struct bpf_syntax_node *node);
 
 #ifdef __cplusplus
 }

@@ -9,7 +9,7 @@
 #define bpf_container_of(ptr, type, member) ((type *)((char *)(ptr)-offsetof(type, member)))
 
 enum {
-    BPF_REGISTER_CR,  ///< 比较结寄器
+    BPF_REGISTER_CR,  ///< 比较结果寄器
     BPF_REGISTER_R0,
     BPF_REGISTER_R1,
     BPF_REGISTER_R2,
@@ -35,13 +35,6 @@ enum {
 struct bpf_list_node {
     struct bpf_list_node *prev;  ///< 上一个节点
     struct bpf_list_node *next;  ///< 下一个节点
-};
-
-/**
- * @brief 寄存器使用情况结构体
- */
-struct bpf_register_usage {
-    uint64_t bitmap;  // 每一位代表一个寄存器的使用情况
 };
 
 /**
@@ -76,10 +69,10 @@ struct bpf_syntax_label_node {
  * @brief 编译上下文结构体
  */
 struct bpf_compilation_context {
-    struct bpf_register_usage reg_usage;       ///< 寄存器使用情况
-    struct bpf_list_node      pending_labels;  ///< 待处理的标签列表
-    uint32_t                  next_label_id;   ///< 下一个标签 ID，用于生成唯一标签名
-    uint16_t                  next_pc;         ///< 下一个程序计数器
+    uint64_t             reg_bitmap;      ///< 寄存器分配位图
+    struct bpf_list_node pending_labels;  ///< 待处理的标签列表
+    uint32_t             next_label_id;   ///< 下一个标签 ID，用于生成唯一标签名
+    uint16_t             next_pc;         ///< 下一个程序计数器
 };
 
 /**
@@ -129,13 +122,13 @@ static const char *bpf_register_name(int reg) {
  * @param reg_usage 寄存器使用情况
  * @return int 返回分配的寄存器编号，-1 表示没有可用寄存器
  */
-static int bpf_register_usage_alloc(struct bpf_register_usage *reg_usage) {
+static int bpf_asm_register_alloc(struct bpf_compilation_context *context) {
     // 查找第一个未使用的寄存器
     for (int i = 0; i < 64; i++) {
         uint64_t mask = 1ULL << i;
-        if (!(reg_usage->bitmap & mask)) {
-            reg_usage->bitmap |= mask;   // 标记为已使用
-            return BPF_REGISTER_R0 + i;  // 返回寄存器编号
+        if (!(context->reg_bitmap & mask)) {
+            context->reg_bitmap |= mask;  // 标记为已使用
+            return BPF_REGISTER_R0 + i;   // 返回寄存器编号
         }
     }
 
@@ -148,10 +141,10 @@ static int bpf_register_usage_alloc(struct bpf_register_usage *reg_usage) {
  * @param reg_usage 寄存器使用情况
  * @param reg 寄存器编号
  */
-static void bpf_register_usage_free(struct bpf_register_usage *reg_usage, int reg) {
+static void bpf_asm_register_free(struct bpf_compilation_context *context, int reg) {
     assert(reg >= BPF_REGISTER_R0 && reg <= BPF_REGISTER_R7);
     uint64_t mask = 1ULL << (reg - BPF_REGISTER_R0);
-    reg_usage->bitmap &= ~mask;  // 清除寄存器使用标记
+    context->reg_bitmap &= ~mask;  // 清除寄存器使用标记
 }
 
 /**
@@ -180,7 +173,7 @@ static uint16_t bpf_asm_next_pc(struct bpf_compilation_context *context) {
 /**
  * @brief 由参数编号转换为寄存器编号
  */
-static int bpf_argn2reg(uint8_t argn) {
+static int bpf_asm_argn2reg(uint8_t argn) {
     if (argn > 4) {                   // 最多支持 4 个参数
         return BPF_REGISTER_INVALID;  // 无效参数编号
     }
@@ -195,8 +188,8 @@ static int bpf_argn2reg(uint8_t argn) {
  * @param node 结点
  * @return 成功时返回 0，失败时返回 -1
  */
-static int bpf_node_asm_operator_comparison(struct bpf_compilation_context *context,
-                                            struct bpf_syntax_node         *node) {
+static int bpf_node_asm_comparison(struct bpf_compilation_context *context,
+                                   struct bpf_syntax_node         *node) {
     assert(node->type == BPF_SYNTAX_NODE_COMPARISON);
 
     // 分配 pc
@@ -212,8 +205,8 @@ static int bpf_node_asm_operator_comparison(struct bpf_compilation_context *cont
     node->reg = BPF_REGISTER_CR;
 
     // 释放左右子结点的寄存器
-    bpf_register_usage_free(&context->reg_usage, node->left->reg);
-    bpf_register_usage_free(&context->reg_usage, node->right->reg);
+    bpf_asm_register_free(context, node->left->reg);
+    bpf_asm_register_free(context, node->right->reg);
     return 0;
 }
 
@@ -231,7 +224,7 @@ static int bpf_node_asm_field(struct bpf_compilation_context *context,
     struct bpf_syntax_field_node *field = (struct bpf_syntax_field_node *)node;
 
     // 从 reg_usage 找出可用的寄存器
-    int reg = bpf_register_usage_alloc(&context->reg_usage);
+    int reg = bpf_asm_register_alloc(context);
     if (reg < 0) {
         fprintf(stderr, "No available registers for field: %s\n", node->str);
         return -1;
@@ -245,7 +238,7 @@ static int bpf_node_asm_field(struct bpf_compilation_context *context,
     printf("%04hx: %-8s [%s:%u:%hhu] -> %s\n",  // [reg:offset:size] -> reg
            node->pc,
            "load",
-           bpf_register_name(bpf_argn2reg(attr->argn)),
+           bpf_register_name(bpf_asm_argn2reg(attr->argn)),
            attr->offset,
            attr->size,
            bpf_register_name(reg));  // 加载字段到寄存器
@@ -263,7 +256,7 @@ static int bpf_node_asm_field(struct bpf_compilation_context *context,
 static int bpf_node_asm_constant(struct bpf_compilation_context *context,
                                  struct bpf_syntax_node         *node) {
     // 从 reg_usage 找出可用的寄存器
-    int reg = bpf_register_usage_alloc(&context->reg_usage);
+    int reg = bpf_asm_register_alloc(context);
     if (reg < 0) {
         fprintf(stderr, "No available registers for constant: %s\n", node->str);
         return -1;
@@ -346,8 +339,8 @@ static int bpf_node_asm_label(struct bpf_compilation_context *context,
  * @param reg_usage 寄存器使用情况
  * @param node 结点
  */
-static int bpf_node_asm_right_sub_expression(struct bpf_compilation_context *context,
-                                             struct bpf_syntax_node         *node) {
+static int bpf_node_asm_right_sub_expr(struct bpf_compilation_context *context,
+                                       struct bpf_syntax_node         *node) {
     (void)context;
     assert(node->type == BPF_SYNTAX_NODE_RIGHT_SUB_EXPR);
     node->reg = node->right->reg;
@@ -357,7 +350,7 @@ static int bpf_node_asm_right_sub_expression(struct bpf_compilation_context *con
 static int bpf_node_asm(struct bpf_compilation_context *context, struct bpf_syntax_node *node) {
     switch (node->type) {
     case BPF_SYNTAX_NODE_COMPARISON:
-        return bpf_node_asm_operator_comparison(context, node);
+        return bpf_node_asm_comparison(context, node);
     case BPF_SYNTAX_NODE_FIELD:
         return bpf_node_asm_field(context, node);
     case BPF_SYNTAX_NODE_CONSTANT:
@@ -367,7 +360,7 @@ static int bpf_node_asm(struct bpf_compilation_context *context, struct bpf_synt
     case BPF_SYNTAX_NODE_LABEL:
         return bpf_node_asm_label(context, node);
     case BPF_SYNTAX_NODE_RIGHT_SUB_EXPR:
-        return bpf_node_asm_right_sub_expression(context, node);
+        return bpf_node_asm_right_sub_expr(context, node);
     default:
         fprintf(stderr, "Invalid node\n");
         return -1;
@@ -476,7 +469,7 @@ struct bpf_compilation_context *bpf_compilation_context_new() {
     }
 
     // 初始化寄存器使用情况
-    context->reg_usage.bitmap    = 0;
+    context->reg_bitmap          = 0;
     context->pending_labels.prev = &context->pending_labels;
     context->pending_labels.next = &context->pending_labels;
     context->next_label_id       = 0;
@@ -560,9 +553,9 @@ int bpf_syntax_tree_post_order(struct bpf_syntax_node *node,
     return callback(context, node);
 }
 
-void bpf_syntax_asm(struct bpf_compilation_context *context, struct bpf_syntax_node *node) {
+void bpf_asm(struct bpf_compilation_context *context, struct bpf_syntax_node *node) {
     // R0 为传的第一个参数，默认有一个参数
-    context->reg_usage.bitmap |= (1ULL << (BPF_REGISTER_R0 - BPF_REGISTER_R0));  // 标记 R0 为已使用
+    context->reg_bitmap |= (1ULL << (BPF_REGISTER_R0 - BPF_REGISTER_R0));  // 标记 R0 为已使用
 
     // 后序遍历语法树，生成 BPF 汇编代码
     bpf_syntax_tree_post_order(node, bpf_node_asm, context);

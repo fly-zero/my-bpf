@@ -94,7 +94,7 @@ static void print_syntax_tree(struct bpf_syntax_node *node, int depth) {
         return;
     }
 
-    bpf_syntax_asm(context, node); // 生成 BPF 汇编
+    bpf_asm(context, node); // 生成 BPF 汇编
 }
 
 static void register_global_field() {
