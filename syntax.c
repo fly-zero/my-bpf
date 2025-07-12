@@ -126,16 +126,12 @@ static int bpf_node_asm_operator_comparison(struct bpf_register_usage *reg_usage
 /**
  * @brief 由参数编号转换为寄存器编号
  */
-static int bpf_argn_to_reg(uint8_t argn) {
-    // 将参数编号转换为寄存器编号
-    // R7 ~ R6 对应参数 0 ~ 1
-    if (argn == 0) {
-        return BPF_REGISTER_R7;  // 第一个参数对应 R7
-    } else if (argn == 1) {
-        return BPF_REGISTER_R6;  // 第二个参数对应 R6
-    } else {
+static int bpf_argn2reg(uint8_t argn) {
+    if (argn > 4) {  // 最多支持 4 个参数
         return BPF_REGISTER_INVALID;  // 无效参数编号
     }
+
+    return BPF_REGISTER_R0 + argn;  // 返回对应的寄存器编号
 }
 
 /**
@@ -161,7 +157,7 @@ static int bpf_node_asm_field(struct bpf_register_usage *reg_usage, struct bpf_s
     assert(attr);
     printf("%16s: [%s:%u:%hhu] -> %s\n",  // [reg:offset:size] -> reg
            "load",
-           bpf_register_name(bpf_argn_to_reg(attr->argn)),
+           bpf_register_name(bpf_argn2reg(attr->argn)),
            attr->offset,
            attr->size,
            bpf_register_name(reg));      // 加载字段到寄存器
@@ -361,8 +357,8 @@ int bpf_syntax_tree_post_order(struct bpf_syntax_node *node,
 void bpf_syntax_asm(struct bpf_syntax_node *node) {
     struct bpf_register_usage reg_usage = {0};  // 每一位代表一个寄存器的使用情况
 
-    // R7 为传的第一个参数，默认有一个参数
-    reg_usage.bitmap |= (1ULL << (BPF_REGISTER_R7 - BPF_REGISTER_R0));  // 标记 R7 为已使用
+    // R0 为传的第一个参数，默认有一个参数
+    reg_usage.bitmap |= (1ULL << (BPF_REGISTER_R0 - BPF_REGISTER_R0));  // 标记 R0 为已使用
 
     bpf_syntax_tree_post_order(node, bpf_node_asm, &reg_usage);
     printf("%16s\n", "ret");  // 最终返回 r0 的值
