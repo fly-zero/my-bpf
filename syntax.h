@@ -17,27 +17,6 @@ enum bpf_syntax_node_type {
     BPF_SYNTAX_NODE_RIGHT_SUB_EXPR,  ///< 右子表达式节点
 };
 
-enum {
-    BPF_REGISTER_CR,  ///< 比较结寄器
-    BPF_REGISTER_R0,
-    BPF_REGISTER_R1,
-    BPF_REGISTER_R2,
-    BPF_REGISTER_R3,
-    BPF_REGISTER_R4,
-    BPF_REGISTER_R5,
-    BPF_REGISTER_R6,
-    BPF_REGISTER_R7,
-    BPF_REGISTER_R8,
-    BPF_REGISTER_R9,
-    BPF_REGISTER_R10,
-    BPF_REGISTER_R11,
-    BPF_REGISTER_R12,
-    BPF_REGISTER_R13,
-    BPF_REGISTER_R14,
-    BPF_REGISTER_R15,
-    BPF_REGISTER_INVALID = -1,  ///< 无效寄存器
-};
-
 struct bpf_syntax_node {
     enum bpf_syntax_node_type type;    ///< 节点类型
     uint8_t                   reg;     ///< 寄存器，-1 表示未分配寄存器
