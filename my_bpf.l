@@ -10,6 +10,8 @@
 
 %%
 
+"("     { return '('; }
+")"     { return ')'; }
 "sip"   { yylval = strdup(yytext); return FIELD; }
 "dip"   { yylval = strdup(yytext); return FIELD; }
 "sport" { yylval = strdup(yytext); return FIELD; }

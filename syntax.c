@@ -127,7 +127,7 @@ static int bpf_node_asm_operator_comparison(struct bpf_register_usage *reg_usage
  * @brief 由参数编号转换为寄存器编号
  */
 static int bpf_argn2reg(uint8_t argn) {
-    if (argn > 4) {  // 最多支持 4 个参数
+    if (argn > 4) {                   // 最多支持 4 个参数
         return BPF_REGISTER_INVALID;  // 无效参数编号
     }
 
@@ -160,8 +160,8 @@ static int bpf_node_asm_field(struct bpf_register_usage *reg_usage, struct bpf_s
            bpf_register_name(bpf_argn2reg(attr->argn)),
            attr->offset,
            attr->size,
-           bpf_register_name(reg));      // 加载字段到寄存器
-    node->reg = reg;  // 设置结点的寄存器编号
+           bpf_register_name(reg));  // 加载字段到寄存器
+    node->reg = reg;                 // 设置结点的寄存器编号
     return 0;
 }
 
@@ -190,8 +190,8 @@ static int bpf_node_asm_constant(struct bpf_register_usage *reg_usage, const cha
  * @param reg_usage 寄存器使用情况
  * @param node 结点
  */
-static void bpf_node_asm_jump_if(struct bpf_register_usage    *reg_usage,
-                                 const struct bpf_syntax_node *node) {
+static void bpf_node_asm_jump_if(struct bpf_register_usage *reg_usage,
+                                 struct bpf_syntax_node    *node) {
     assert(BPF_SYNTAX_NODE_JUMP_IF == node->type);
     assert(node->right && node->right->type == BPF_SYNTAX_NODE_JUMP_LABEL);
     assert(node->left && node->left->reg == BPF_REGISTER_CR);
@@ -206,7 +206,15 @@ static void bpf_node_asm_jump_if(struct bpf_register_usage    *reg_usage,
         return;
     }
 
-    printf("%16s\n", "ret");  // 返回指令
+    struct bpf_syntax_node *parent = node->parent;
+    assert(parent && parent->type == BPF_SYNTAX_NODE_RIGHT_SUB_EXPRESSION);
+    struct bpf_syntax_node *grandparent = parent->parent;
+    if (!grandparent) {
+        printf("%16s\n", "ret");  // 返回指令
+    } else {
+        assert(grandparent->type == BPF_SYNTAX_NODE_JUMP_IF);
+        printf("not implemented yet\n");
+    }
 }
 
 /**
@@ -215,10 +223,10 @@ static void bpf_node_asm_jump_if(struct bpf_register_usage    *reg_usage,
  * @param reg_usage 寄存器使用情况
  * @param node 结点
  */
-static void bpf_node_asm_right_sub_expression(struct bpf_register_usage    *reg_usage,
-                                              const struct bpf_syntax_node *node) {
+static void bpf_node_asm_right_sub_expression(struct bpf_register_usage *reg_usage,
+                                              struct bpf_syntax_node    *node) {
     assert(node->type == BPF_SYNTAX_NODE_RIGHT_SUB_EXPRESSION);
-    printf("%16s: cs -> R0\n", "mov");
+    node->reg = node->right->reg;
 }
 
 static int bpf_node_asm(struct bpf_syntax_node *node, void *arg) {
@@ -360,8 +368,12 @@ void bpf_syntax_asm(struct bpf_syntax_node *node) {
     // R0 为传的第一个参数，默认有一个参数
     reg_usage.bitmap |= (1ULL << (BPF_REGISTER_R0 - BPF_REGISTER_R0));  // 标记 R0 为已使用
 
+    // 后序遍历语法树，生成 BPF 汇编代码
     bpf_syntax_tree_post_order(node, bpf_node_asm, &reg_usage);
-    printf("%16s\n", "ret");  // 最终返回 r0 的值
+
+    // 最终将结果寄存器的值移动到 R0，然后返回
+    printf("%16s: %s -> R0\n", "mov", bpf_register_name(node->reg));  // 将结果寄存器的值移动到 R0
+    printf("%16s\n", "ret");                                          // 最终返回 r0 的值
 }
 
 /**
