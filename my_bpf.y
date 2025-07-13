@@ -1,6 +1,8 @@
 %{
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "syntax.h"
 
@@ -37,24 +39,20 @@ program
 
 expr
 : factor LOGICAL factor {
-    // 创建一个跳转标签结点
-    struct bpf_syntax_node *label_node = bpf_syntax_node_new(context, BPF_SYNTAX_NODE_LABEL, NULL);
+    struct bpf_syntax_node *node;
+    if (strcmp($2, "&&") == 0) {
+        node = bpf_syntax_node_new(context, BPF_SYNTAX_NODE_IF, $2);
+    } else if (strcmp($2, "||") == 0) {
+        node = bpf_syntax_node_new(context, BPF_SYNTAX_NODE_IF_FALSE, $2);
+    } else {
+        assert(0);
+    }
 
-    // 创建条件跳转结点，用于实现逻辑运算的短路求值
-    struct bpf_syntax_node *jump_node  = bpf_syntax_node_new(context, BPF_SYNTAX_NODE_JUMP_IF, $2);
-    jump_node->left = $1;
-    jump_node->right = label_node;
-    $1->parent = jump_node;
-    label_node->parent = jump_node;
-
-    // 创建一个取右子表达式的结点
-    struct bpf_syntax_node *right_expr = bpf_syntax_node_new(context, BPF_SYNTAX_NODE_RIGHT_SUB_EXPR, NULL);
-    right_expr->left = jump_node;
-    right_expr->right = $3;
-    jump_node->parent = right_expr;
-    $3->parent = right_expr;
-
-    $$ = right_expr;
+    node->left = $1;
+    node->right = $3;
+    $1->parent = node;
+    $3->parent = node;
+    $$ = node;
 }
 | factor {
     $$ = $1;

@@ -12,19 +12,19 @@ enum bpf_syntax_node_type {
     BPF_SYNTAX_NODE_COMPARISON,      ///< 比较运算符节点
     BPF_SYNTAX_NODE_FIELD,           ///< 字段节点
     BPF_SYNTAX_NODE_CONSTANT,        ///< 常量节点
-    BPF_SYNTAX_NODE_JUMP_IF,         ///< 条件跳转节点，左为条件，右为跳转目标
-    BPF_SYNTAX_NODE_LABEL,           ///< 跳转标签节点
-    BPF_SYNTAX_NODE_RIGHT_SUB_EXPR,  ///< 右子表达式节点
+    BPF_SYNTAX_NODE_IF,              ///< 条件语句节点
+    BPF_SYNTAX_NODE_IF_FALSE,        ///< 条件语句的否定节点
 };
 
 struct bpf_syntax_node {
-    enum bpf_syntax_node_type type;    ///< 节点类型
-    uint8_t                   reg;     ///< 寄存器，-1 表示未分配寄存器
-    uint16_t                  pc;      ///< 当前结生成汇编的程序计数器
-    char                     *str;     ///< 节点字符串表示
-    struct bpf_syntax_node   *parent;  ///< 父节点
-    struct bpf_syntax_node   *left;    ///< 左子节点
-    struct bpf_syntax_node   *right;   ///< 右子节点
+    enum bpf_syntax_node_type type;       ///< 节点类型
+    uint8_t                   reg;        ///< 寄存器，-1 表示未分配寄存器
+    uint8_t                   instr_len;  ///< 占用的指令长度
+    uint16_t                  pc;         ///< 当前结生成汇编的程序计数器
+    char                     *str;        ///< 节点字符串表示
+    struct bpf_syntax_node   *parent;     ///< 父节点
+    struct bpf_syntax_node   *left;       ///< 左子节点
+    struct bpf_syntax_node   *right;      ///< 右子节点
 };
 
 struct bpf_syntax_tree {
@@ -51,11 +51,11 @@ void bpf_compilation_context_free(struct bpf_compilation_context *context);
  *
  * @param name 字段名称
  * @param argn 字段从第几个参数传入
- * @param size 字段大小
+ * @param size 字段大小，单位为字节，1、2、4 或 8
  * @param offset 字段在参数中的偏移量
  * @return int 0 成功，-1 失败
  */
-int bpf_syntax_register_field(const char *name, uint8_t argn, uint8_t size, uint32_t offset);
+int bpf_syntax_register_field(const char *name, uint8_t argn, uint8_t size, uint16_t offset);
 
 /**
  * @brief 创建一个新的 BPF 语法节点
@@ -93,8 +93,9 @@ int bpf_syntax_tree_post_order(struct bpf_syntax_node *node,
  *
  * @param context 编译上下文
  * @param node 语法树根节点
+ * @return int 0 成功，-1 失败
  */
-void bpf_asm(struct bpf_compilation_context *context, struct bpf_syntax_node *node);
+int bpf_asm(struct bpf_compilation_context *context, struct bpf_syntax_node *node);
 
 #ifdef __cplusplus
 }

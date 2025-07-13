@@ -5,11 +5,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
+
+#include "bpf_instrin.h"
 
 #define bpf_container_of(ptr, type, member) ((type *)((char *)(ptr)-offsetof(type, member)))
 
 enum {
-    BPF_REGISTER_CR,  ///< 比较结果寄器
+    BPF_REGISTER_LCR,  ///< 上一次比较结果寄器
     BPF_REGISTER_R0,
     BPF_REGISTER_R1,
     BPF_REGISTER_R2,
@@ -45,7 +48,7 @@ struct bpf_syntax_field_attr {
     char                *name;       ///< 字段名称
     uint8_t              argn;       ///< 字段地址所在参数编号
     uint8_t              size;       ///< 字段大小
-    uint32_t             offset;     ///< 字段相对于参数的偏移量
+    uint16_t             offset;     ///< 字段相对于参数的偏移量
 };
 
 /**
@@ -57,22 +60,23 @@ struct bpf_syntax_field_node {
 };
 
 /**
- * @brief 标签节点结构体
+ * @brief 条件语句节点结构体
  */
-struct bpf_syntax_label_node {
-    struct bpf_syntax_node  node;       ///< 基类
-    struct bpf_list_node    list_hook;  ///< 链表钩子，用于链表管理
-    struct bpf_syntax_node *target;     ///< 目标节点
+struct bpf_syntax_if_node {
+    struct bpf_syntax_node  node;          ///< 基类
+    struct bpf_syntax_node *true_branch;   ///< 真分支
+    struct bpf_syntax_node *false_branch;  ///< 假分支
 };
 
 /**
  * @brief 编译上下文结构体
  */
 struct bpf_compilation_context {
-    uint64_t             reg_bitmap;      ///< 寄存器分配位图
-    struct bpf_list_node pending_labels;  ///< 待处理的标签列表
-    uint32_t             next_label_id;   ///< 下一个标签 ID，用于生成唯一标签名
-    uint16_t             next_pc;         ///< 下一个程序计数器
+    uint64_t  reg_bitmap;      ///< 寄存器分配位图
+    uint16_t  next_label_id;   ///< 下一个标签 ID，用于生成唯一标签名
+    uint16_t  next_pc;         ///< 下一个程序计数器
+    uint16_t  instr_capacity;  ///< 指令容量
+    uint32_t *instrs;          ///< 指令数组
 };
 
 /**
@@ -109,7 +113,7 @@ static void bpf_list_unlink(struct bpf_list_node *node) {
 
 static const char *bpf_register_name(int reg) {
     // 检查寄存器编号是否在有效范围内
-    if (reg < BPF_REGISTER_CR || reg > BPF_REGISTER_R7) {
+    if (reg < BPF_REGISTER_LCR || reg > BPF_REGISTER_R7) {
         return "INVALID";
     }
 
@@ -148,29 +152,6 @@ static void bpf_asm_register_free(struct bpf_compilation_context *context, int r
 }
 
 /**
- * @brief 获取下一个标签 ID
- *
- * @param context 编译上下文
- * @return uint32_t 下一个标签 ID
- */
-static uint32_t bpf_asm_next_label_id(struct bpf_compilation_context *context) {
-    uint32_t id = context->next_label_id++;
-    return id;  // 返回下一个标签 ID
-}
-
-/**
- * @brief 获取下一个程序计数器
- *
- * @param context 编译上下文
- * @return uint32_t 下一个程序计数器
- */
-static uint16_t bpf_asm_next_pc(struct bpf_compilation_context *context) {
-    uint16_t pc = context->next_pc++;
-    assert(pc < context->next_pc);  // 断言程序计数器不会溢出
-    return pc;                      // 返回下一个程序计数器
-}
-
-/**
  * @brief 由参数编号转换为寄存器编号
  */
 static int bpf_asm_argn2reg(uint8_t argn) {
@@ -179,6 +160,61 @@ static int bpf_asm_argn2reg(uint8_t argn) {
     }
 
     return BPF_REGISTER_R0 + argn;  // 返回对应的寄存器编号
+}
+
+/**
+ * @brief 扩展指令数组的容量
+ *
+ * @param context 编译上下文
+ * @return 成功时返回 0，失败时返回 -1
+ */
+static int bpf_asm_expand_instrs(struct bpf_compilation_context *context) {
+    if (context->next_pc >= UINT16_MAX) {
+        fprintf(stderr, "Instruction length exceeds maximum limit\n");
+        return -1;  // 指令长度超过最大限制
+    }
+
+    // 扩展指令数组的容量
+    if (context->next_pc >= context->instr_capacity) {
+        size_t    new_capacity = context->instr_capacity ? context->instr_capacity * 2 : 16;
+        uint32_t *new_instrs   = realloc(context->instrs, new_capacity * sizeof(uint32_t));
+        if (!new_instrs) {
+            fprintf(stderr, "Failed to allocate memory for instructions\n");
+            return -1;  // 内存分配失败
+        }
+
+        context->instrs         = new_instrs;
+        context->instr_capacity = new_capacity;
+    }
+
+    return 0;  // 成功扩展指令数组
+}
+
+/**
+ * @brief 将一条指令追加到编译上下文的指令数组中
+ *
+ * @param context 编译上下文
+ * @param instr 要追加的指令
+ * @return int 成功时返回指令的指令计数器位置；失败时返回 -1
+ */
+static int bpf_asm_append_instr(struct bpf_compilation_context *context, uint32_t instr) {
+    // 扩展指令数组容量
+    if (bpf_asm_expand_instrs(context) < 0) {
+        return -1;  // 扩展失败
+    }
+
+    // 将指令添加到数组中
+    uint16_t pc = context->next_pc++;
+    assert(pc < context->next_pc);  // 确保程序计数器不会溢出
+    context->instrs[pc] = instr;
+    return pc;
+}
+
+/**
+ * @brief 将寄存器编号转换为寄存器 ID
+ */
+static int bpf_asm_register_id(int reg) {
+    return reg - BPF_REGISTER_R0;  // 将寄存器编号转换为 ID
 }
 
 /**
@@ -192,17 +228,12 @@ static int bpf_node_asm_comparison(struct bpf_compilation_context *context,
                                    struct bpf_syntax_node         *node) {
     assert(node->type == BPF_SYNTAX_NODE_COMPARISON);
 
-    // 分配 pc
-    node->pc = bpf_asm_next_pc(context);
-
-    // 输出比较操作的 BPF 汇编代码
-    printf("%04hx: %-8s %s %s %s\n",
-           node->pc,
-           "cmp",
-           bpf_register_name(node->left->reg),
-           node->str,
-           bpf_register_name(node->right->reg));
-    node->reg = BPF_REGISTER_CR;
+    // 添加指令到编译上下文
+    uint32_t cmp_instr = bpf_instrin_cmp(bpf_asm_register_id(node->left->reg),
+                                         bpf_asm_register_id(node->right->reg));
+    node->pc           = bpf_asm_append_instr(context, cmp_instr);
+    node->instr_len    = 1;
+    node->reg          = BPF_REGISTER_LCR;
 
     // 释放左右子结点的寄存器
     bpf_asm_register_free(context, node->left->reg);
@@ -221,8 +252,6 @@ static int bpf_node_asm_field(struct bpf_compilation_context *context,
                               struct bpf_syntax_node         *node) {
     assert(node->type == BPF_SYNTAX_NODE_FIELD);
 
-    struct bpf_syntax_field_node *field = (struct bpf_syntax_field_node *)node;
-
     // 从 reg_usage 找出可用的寄存器
     int reg = bpf_asm_register_alloc(context);
     if (reg < 0) {
@@ -230,19 +259,18 @@ static int bpf_node_asm_field(struct bpf_compilation_context *context,
         return -1;
     }
 
-    // 分配 pc
-    node->pc = bpf_asm_next_pc(context);
+    struct bpf_syntax_field_node       *field = (struct bpf_syntax_field_node *)node;
+    const struct bpf_syntax_field_attr *attr  = field->attr;
+    assert(attr && ((attr->size - 1) & attr->size) == 0 && attr->size <= 8);
 
-    const struct bpf_syntax_field_attr *attr = field->attr;
-    assert(attr);
-    printf("%04hx: %-8s [%s:%u:%hhu] -> %s\n",  // [reg:offset:size] -> reg
-           node->pc,
-           "load",
-           bpf_register_name(bpf_asm_argn2reg(attr->argn)),
-           attr->offset,
-           attr->size,
-           bpf_register_name(reg));  // 加载字段到寄存器
-    node->reg = reg;                 // 设置结点的寄存器编号
+    // 添加指令到编译上下文
+    uint32_t load_instr = bpf_instrin_load(__builtin_ctz(attr->size),
+                                           bpf_asm_register_id(reg),
+                                           bpf_asm_register_id(bpf_asm_argn2reg(attr->argn)),
+                                           attr->offset);
+    node->pc            = bpf_asm_append_instr(context, load_instr);
+    node->instr_len     = 1;
+    node->reg           = reg;
     return 0;
 }
 
@@ -262,120 +290,215 @@ static int bpf_node_asm_constant(struct bpf_compilation_context *context,
         return -1;
     }
 
-    // 分配 pc
-    node->pc = bpf_asm_next_pc(context);
+    // TODO: 通过另一个操作数据来判断数据类型
 
-    printf("%04hx: %-8s %s -> %s\n", node->pc, "set", node->str, bpf_register_name(reg));
-    node->reg = reg;
+    // 添加指令到编译上下文
+    uint32_t set_instr = bpf_instrin_set(0, bpf_asm_register_id(reg), (uint16_t)atoi(node->str));
+    node->pc           = bpf_asm_append_instr(context, set_instr);
+    node->instr_len    = 1;
+    node->reg          = reg;
     return 0;
 }
 
 /**
- * @brief 生成条件跳转的 BPF 汇编代码
+ * @brief 向上查找第一个不是指定类型的父节点
  *
- * @param reg_usage 寄存器使用情况
- * @return 成功时返回 0，失败时返回 -1
+ * @param node 当前节点
+ * @param type 要查找的节点类型
+ * @return 返回找到的父节点，如果没有找到则返回 NULL
  */
-static int bpf_node_asm_jump_if(struct bpf_compilation_context *context,
-                                struct bpf_syntax_node         *node) {
-    (void)context;
-    // 分配 pc
-    node->pc = bpf_asm_next_pc(context);
-
-    assert(BPF_SYNTAX_NODE_JUMP_IF == node->type);
-    assert(node->right && node->right->type == BPF_SYNTAX_NODE_LABEL);
-    assert(node->left && node->left->reg == BPF_REGISTER_CR);
-    if (strcmp(node->str, "&&") == 0) {
-        printf("%04hx: %-8s %s\n", node->pc, "jmpt", node->right->str);
-        printf("%04hx: %-8s 0 -> R0\n", bpf_asm_next_pc(context), "set");
-    } else if (strcmp(node->str, "||") == 0) {
-        printf("%04hx: %-8s %s\n", node->pc, "jmpf", node->right->str);
-        printf("%04hx: %-8s 1 -> R0\n", bpf_asm_next_pc(context), "set");
-    } else {
-        fprintf(stderr, "Unknown jump condition: %s\n", node->str);
-        return -1;
+static struct bpf_syntax_node *bpf_syntax_find_parent(struct bpf_syntax_node   *node,
+                                                      enum bpf_syntax_node_type type) {
+    node = node->parent;
+    while (node && node->type == type) {
+        node = node->parent;  // 向上查找父节点
     }
 
-    struct bpf_syntax_node *parent = node->parent;
-    assert(parent && parent->type == BPF_SYNTAX_NODE_RIGHT_SUB_EXPR);
-    struct bpf_syntax_node *grandparent = parent->parent;
-    if (!grandparent) {
-        printf("%04hx: %-8s\n", bpf_asm_next_pc(context), "ret");
+    return node;  // 没有找到符合条件的父节点
+}
+
+/**
+ * @brief 生成条件语句的 BPF 汇编代码
+ *
+ * @param context 编译上下文
+ * @param node 结点
+ * @return int 成功时返回 0，失败时返回 -1
+ */
+static int bpf_node_asm_if(struct bpf_compilation_context *context, struct bpf_syntax_node *node) {
+    assert(node->type == BPF_SYNTAX_NODE_IF);
+
+    struct bpf_syntax_node *left = node->left;
+    const char             *cmp_op;
+
+    // 获取比较操作符
+    if (left->type == BPF_SYNTAX_NODE_COMPARISON) {
+        cmp_op = left->str;
+    } else if (left->type == BPF_SYNTAX_NODE_IF || BPF_SYNTAX_NODE_IF_FALSE) {
+        assert(left->right && left->right->type == BPF_SYNTAX_NODE_COMPARISON);
+        cmp_op = left->right->str;
     } else {
-        assert(grandparent->type == BPF_SYNTAX_NODE_JUMP_IF);
-        printf("%04hx: %-8s %s\n", bpf_asm_next_pc(context), "jump", grandparent->right->str);
+        fprintf(stderr, "Unsupported left node type for IF: %d\n", left->type);
+        return -1;  // 不支持的左子结点类型
     }
 
+    // 根据比较操作符生成相应的跳转指令
+    if (strcmp(cmp_op, "==") == 0) {
+        // 如果是等于比较，使用 je 指令
+        // TODO: 跳转目标需要修补
+        uint32_t jne_instr = bpf_instrin_jne(0);
+        node->pc           = bpf_asm_append_instr(context, jne_instr);
+    } else if (strcmp(cmp_op, "!=") == 0) {
+        // 如果是不等于比较，使用 jne 指令
+        // TODO: 跳转目标需要修补
+        uint32_t je_instr = bpf_instrin_je(0);
+        node->pc          = bpf_asm_append_instr(context, je_instr);
+    } else {
+        fprintf(stderr, "Unsupported comparison operator: %s\n", left->str);
+        return -1;  // 不支持的比较运算符
+    }
+
+    // 设置当前节点的指令长度
+    node->instr_len = 1;
+
+    // 设置 true_branch 和 false_branch
+    struct bpf_syntax_if_node *if_node = (struct bpf_syntax_if_node *)node;
+    struct bpf_syntax_node    *p       = bpf_syntax_find_parent(node, BPF_SYNTAX_NODE_IF);
+    if_node->false_branch              = p ? p->right : NULL;
+    if_node->true_branch               = node->right;
+    assert(!p || p->type == BPF_SYNTAX_NODE_IF_FALSE);
     return 0;
 }
 
 /**
- * @brief 生成标签的 BPF 汇编代码
+ * @brief 生成条件语句的否定 BPF 汇编代码
  *
- * @param reg_usage 寄存器使用情况
+ * @param context 编译上下文
  * @param node 结点
- * @return 成功时返回 0，失败时返回 -1
+ * @return int 成功时返回 0，失败时返回 -1
  */
-static int bpf_node_asm_label(struct bpf_compilation_context *context,
-                              struct bpf_syntax_node         *node) {
-    assert(node->type == BPF_SYNTAX_NODE_LABEL);
-    assert(node->parent && node->parent->type == BPF_SYNTAX_NODE_JUMP_IF);
-    assert(node->parent->right == node);
-    struct bpf_syntax_label_node *label = (struct bpf_syntax_label_node *)node;
+static int bpf_node_asm_if_false(struct bpf_compilation_context *context,
+                                 struct bpf_syntax_node         *node) {
+    assert(node->type == BPF_SYNTAX_NODE_IF_FALSE);
 
-    // 设置跳转目标
-    struct bpf_syntax_node *grandparent = node->parent->parent;
-    assert(grandparent && grandparent->type == BPF_SYNTAX_NODE_RIGHT_SUB_EXPR);
-    label->target = grandparent->right;  // 设置跳转目标
+    struct bpf_syntax_node *left = node->left;
+    const char             *cmp_op;
 
-    // 将标签节点添加到待处理标签列表
-    bpf_list_append(&context->pending_labels, &label->list_hook);
+    // 获取比较操作符
+    if (left->type == BPF_SYNTAX_NODE_COMPARISON) {
+        cmp_op = left->str;
+    } else if (left->type == BPF_SYNTAX_NODE_IF || BPF_SYNTAX_NODE_IF_FALSE) {
+        assert(left->right && left->right->type == BPF_SYNTAX_NODE_COMPARISON);
+        cmp_op = left->right->str;
+    } else {
+        fprintf(stderr, "Unsupported left node type for IF_FALSE: %d\n", left->type);
+        return -1;  // 不支持的左子结点类型
+    }
+
+    // 根据比较操作符生成相应的跳转指令
+    if (strcmp(cmp_op, "==") == 0) {
+        // 如果是等于比较，使用 je 指令
+        // TODO: 跳转目标需要修补
+        uint32_t je_instr = bpf_instrin_je(0);
+        node->pc          = bpf_asm_append_instr(context, je_instr);
+    } else if (strcmp(cmp_op, "!=") == 0) {
+        // 如果是不等于比较，使用 je 指令
+        // TODO: 跳转目标需要修补
+        uint32_t jne_instr = bpf_instrin_jne(0);
+        node->pc           = bpf_asm_append_instr(context, jne_instr);
+    } else {
+        fprintf(stderr, "Unsupported comparison operator: %s\n", left->str);
+        return -1;  // 不支持的比较运算符
+    }
+
+    // 设置当前节点的指令长度
+    node->instr_len = 1;
+
+    // 设置 true_branch 和 false_branch
+    struct bpf_syntax_if_node *if_node = (struct bpf_syntax_if_node *)node;
+    struct bpf_syntax_node    *p       = bpf_syntax_find_parent(node, BPF_SYNTAX_NODE_IF_FALSE);
+    if_node->false_branch              = p ? p->right : NULL;
+    if_node->true_branch               = node->right;
+    assert(!p || p->type == BPF_SYNTAX_NODE_IF);
     return 0;
 }
 
 /**
- * @brief 生成右子表达式的 BPF 汇编代码
+ * @brief 生成 BPF 汇编代码
  *
- * @param reg_usage 寄存器使用情况
+ * @param context 编译上下文
  * @param node 结点
+ * @return int 成功时返回 0，失败时返回 -1
  */
-static int bpf_node_asm_right_sub_expr(struct bpf_compilation_context *context,
-                                       struct bpf_syntax_node         *node) {
-    (void)context;
-    assert(node->type == BPF_SYNTAX_NODE_RIGHT_SUB_EXPR);
-    node->reg = node->right->reg;
-    return 0;
-}
-
-static int bpf_node_asm(struct bpf_compilation_context *context, struct bpf_syntax_node *node) {
+static int bpf_asm_gen(struct bpf_compilation_context *context, struct bpf_syntax_node *node) {
     switch (node->type) {
     case BPF_SYNTAX_NODE_COMPARISON:
-        return bpf_node_asm_comparison(context, node);
+        if (bpf_asm_gen(context, node->left) < 0) {
+            return -1;  // 左子结点生成失败
+        }
+
+        if (bpf_asm_gen(context, node->right) < 0) {
+            return -1;  // 右子结点生成失败
+        }
+
+        return bpf_node_asm_comparison(context, node);  // 生成比较操作的 BPF 汇编代码
+
     case BPF_SYNTAX_NODE_FIELD:
-        return bpf_node_asm_field(context, node);
+        assert(!node->left && !node->right);       // 字段节点没有子结点
+        return bpf_node_asm_field(context, node);  // 生成加载字段的
+
     case BPF_SYNTAX_NODE_CONSTANT:
-        return bpf_node_asm_constant(context, node);
-    case BPF_SYNTAX_NODE_JUMP_IF:
-        return bpf_node_asm_jump_if(context, node);
-    case BPF_SYNTAX_NODE_LABEL:
-        return bpf_node_asm_label(context, node);
-    case BPF_SYNTAX_NODE_RIGHT_SUB_EXPR:
-        return bpf_node_asm_right_sub_expr(context, node);
+        assert(!node->left && !node->right);          // 常量节点没有子结点
+        return bpf_node_asm_constant(context, node);  // 生成加载常量的 BPF 汇编代码
+
+    case BPF_SYNTAX_NODE_IF:
+        assert(node->left && node->right);  // 条件语句节点必须有
+        if (bpf_asm_gen(context, node->left) < 0) {
+            return -1;  // 左子结点生成失败
+        }
+
+        if (bpf_node_asm_if(context, node) < 0) {
+            return -1;  // 条件语句生成失败
+        }
+
+        if (bpf_asm_gen(context, node->right) < 0) {
+            return -1;  // 右子结点生成失败
+        }
+
+        return 0;  // 成功生成条件语句
+
+    case BPF_SYNTAX_NODE_IF_FALSE:
+        assert(node->left && node->right);  // 条件语句的否定节点必须有
+        if (bpf_asm_gen(context, node->left) < 0) {
+            return -1;  // 左子结点生成失败
+        }
+
+        if (bpf_node_asm_if_false(context, node) < 0) {
+            return -1;  // 条件语句生成失败
+        }
+
+        if (bpf_asm_gen(context, node->right) < 0) {
+            return -1;  // 右子结点生成失败
+        }
+
+        return 0;  // 成功生成条件语句的否定
+
     default:
-        fprintf(stderr, "Invalid node\n");
-        return -1;
+        fprintf(stderr, "Unsupported node type: %d\n", node->type);
+        return -1;  // 不支持的节点类型
     }
 }
 
-static int bpf_node_free(struct bpf_compilation_context *context, struct bpf_syntax_node *node) {
+/**
+ * @brief 释放单个语法树结点及其字符串表示
+ *
+ * @param context 编译上下文
+ * @param node 结点
+ * @return int 成功时返回 0，失败时返回 -1
+ */
+static int bpf_syntax_node_free_single(struct bpf_compilation_context *context,
+                                       struct bpf_syntax_node         *node) {
     if (!node) {
         return 0;  // 如果节点为空，直接返回
-    }
-
-    // 从待处理标签列表中移除
-    if (node->type == BPF_SYNTAX_NODE_LABEL) {
-        struct bpf_syntax_label_node *label = (struct bpf_syntax_label_node *)node;
-        bpf_list_unlink(&label->list_hook);
     }
 
     // 释放当前节点的字符串表示
@@ -384,7 +507,77 @@ static int bpf_node_free(struct bpf_compilation_context *context, struct bpf_syn
     return 0;
 }
 
-const struct bpf_syntax_field_attr *bpf_field_attr_find(const char *name) {
+/**
+ * @brief 查找语法树的最左结点
+ */
+static struct bpf_syntax_node *bpf_syntax_true_left_most(struct bpf_syntax_node *node) {
+    // 查找左子树的最左结点
+    while (node->left) {
+        node = node->left;
+    }
+
+    return node;  // 返回最左结点
+}
+
+/**
+ * @brief 设置跳转指令的偏移量
+ *
+ * @param instrs 要修改的指令
+ * @param offset 新的跳转偏移量
+ */
+static void bpf_asm_set_jmp_offset(uint32_t *instrs, uint16_t offset) {
+    struct bpf_instrin_jmp *jmp_instr = (struct bpf_instrin_jmp *)instrs;
+    assert(BPF_INSTRIN_JMP <= jmp_instr->opcode && jmp_instr->opcode <= BPF_INSTRIN_JNL);
+    jmp_instr->offset = offset;
+}
+
+/**
+ * @brief 修正 if 语句的跳转指令
+ *
+ * @param context 编译上下文
+ * @param node 结点
+ * @return int 成功时返回 0，失败时返回 -1
+ */
+static int bpf_syntax_node_fix_if_jump(struct bpf_compilation_context *context,
+                                       struct bpf_syntax_node         *node) {
+    if (!node) {
+        return 0;  // 如果节点为空或不是条件语句节点，直接返回
+    }
+
+    if (node->type == BPF_SYNTAX_NODE_IF) {
+        // 获取 false_branch 的程序计数器
+        struct bpf_syntax_if_node *if_node = (struct bpf_syntax_if_node *)node;
+        if (if_node->false_branch) {
+            // 修正 false_branch 的跳转偏移量
+            assert(if_node->false_branch->type == BPF_SYNTAX_NODE_COMPARISON);
+            struct bpf_syntax_node *left_most = bpf_syntax_true_left_most(if_node->false_branch);
+            uint32_t                offset    = left_most->pc - node->pc - 1;
+            bpf_asm_set_jmp_offset(context->instrs + node->pc, offset);
+        } else {
+            // 直接跳转到程序末尾
+            uint32_t offset = context->next_pc - node->pc - 3;
+            bpf_asm_set_jmp_offset(context->instrs + node->pc, offset);
+        }
+    } else if (node->type == BPF_SYNTAX_NODE_IF_FALSE) {
+        // 获取 true_branch 的程序计数器
+        struct bpf_syntax_if_node *if_node = (struct bpf_syntax_if_node *)node;
+        if (if_node->false_branch) {
+            // 修正 true_branch 的跳转偏移量
+            assert(if_node->false_branch->type == BPF_SYNTAX_NODE_COMPARISON);
+            struct bpf_syntax_node *left_most = bpf_syntax_true_left_most(if_node->false_branch);
+            uint32_t                offset    = left_most->pc - node->pc - 1;
+            bpf_asm_set_jmp_offset(context->instrs + node->pc, offset);
+        } else {
+            // 直接跳转到程序末尾
+            uint32_t offset = context->next_pc - node->pc - 3;
+            bpf_asm_set_jmp_offset(context->instrs + node->pc, offset);
+        }
+    }
+
+    return 0;
+}
+
+static const struct bpf_syntax_field_attr *bpf_field_attr_find(const char *name) {
     // 在全局字段链表中查找字段属性
     for (struct bpf_list_node *node = s_bpf_field_attr_list.next; node != &s_bpf_field_attr_list;
          node                       = node->next) {
@@ -400,13 +593,14 @@ const struct bpf_syntax_field_attr *bpf_field_attr_find(const char *name) {
 static void bpf_syntax_node_init(struct bpf_syntax_node   *node,
                                  enum bpf_syntax_node_type type,
                                  char                     *str) {
-    node->type   = type;
-    node->reg    = BPF_REGISTER_INVALID;
-    node->pc     = -1;
-    node->str    = str;
-    node->parent = NULL;
-    node->left   = NULL;
-    node->right  = NULL;
+    node->type      = type;
+    node->reg       = BPF_REGISTER_INVALID;
+    node->instr_len = 0;
+    node->pc        = -1;
+    node->str       = str;
+    node->parent    = NULL;
+    node->left      = NULL;
+    node->right     = NULL;
 }
 
 static struct bpf_syntax_node *bpf_syntax_field_node_new(char *str) {
@@ -417,27 +611,19 @@ static struct bpf_syntax_node *bpf_syntax_field_node_new(char *str) {
         return NULL;  // 字段未注册
     }
 
-    struct bpf_syntax_field_node *field =
+    struct bpf_syntax_field_node *p =
         (struct bpf_syntax_field_node *)malloc(sizeof(struct bpf_syntax_field_node));
-    struct bpf_syntax_node *node = &field->node;             // 将基类指针指向子类
+    struct bpf_syntax_node *node = &p->node;                 // 将基类指针指向子类
     bpf_syntax_node_init(node, BPF_SYNTAX_NODE_FIELD, str);  // 初始化节点
-    field->attr = attr;                                      // 设置字段属性
+    p->attr = attr;                                          // 设置字段属性
     return node;
 }
 
-static struct bpf_syntax_node *bpf_syntax_label_node_new(uint32_t id) {
-    // 生成标签名
-    char buf[128];
-    snprintf(buf, sizeof(buf), "label_%u", id);  // 生成标签
-
-    // 分配标签节点
-    struct bpf_syntax_label_node *label =
-        (struct bpf_syntax_label_node *)malloc(sizeof(struct bpf_syntax_label_node));
-    struct bpf_syntax_node *node = &label->node;
-    bpf_syntax_node_init(node, BPF_SYNTAX_NODE_LABEL, strdup(buf));
-    label->list_hook.prev = NULL;
-    label->list_hook.next = NULL;
-    label->target         = NULL;
+static struct bpf_syntax_node *bpf_syntax_if_node_new(enum bpf_syntax_node_type type, char *str) {
+    struct bpf_syntax_if_node *p =
+        (struct bpf_syntax_if_node *)malloc(sizeof(struct bpf_syntax_if_node));
+    struct bpf_syntax_node *node = &p->node;  // 将基类指针指向子类
+    bpf_syntax_node_init(node, type, str);    // 初始化节点
     return node;
 }
 
@@ -446,18 +632,6 @@ static struct bpf_syntax_node *bpf_syntax_node_generic_new(enum bpf_syntax_node_
     struct bpf_syntax_node *node = (struct bpf_syntax_node *)malloc(sizeof(struct bpf_syntax_node));
     bpf_syntax_node_init(node, type, str);  // 初始化节点
     return node;
-}
-
-/**
- * @brief 查找语法树的最左结点
- */
-static struct bpf_syntax_node *bpf_syntax_true_left_most(struct bpf_syntax_node *node) {
-    // 查找左子树的最左结点
-    while (node->left) {
-        node = node->left;
-    }
-
-    return node;  // 返回最左结点
 }
 
 struct bpf_compilation_context *bpf_compilation_context_new() {
@@ -469,11 +643,11 @@ struct bpf_compilation_context *bpf_compilation_context_new() {
     }
 
     // 初始化寄存器使用情况
-    context->reg_bitmap          = 0;
-    context->pending_labels.prev = &context->pending_labels;
-    context->pending_labels.next = &context->pending_labels;
-    context->next_label_id       = 0;
-    context->next_pc             = 0;
+    context->reg_bitmap     = 0;
+    context->next_label_id  = 0;
+    context->next_pc        = 0;
+    context->instr_capacity = 0;
+    context->instrs         = NULL;
     return context;
 }
 
@@ -482,10 +656,26 @@ void bpf_compilation_context_free(struct bpf_compilation_context *context) {
         return;  // 如果上下文为空，直接返回
     }
 
+    if (context->instrs) {
+        free(context->instrs);  // 释放指令数组
+    }
+
     free(context);  // 释放编译上下文
 }
 
-int bpf_syntax_register_field(const char *name, uint8_t argn, uint8_t size, uint32_t offset) {
+int bpf_syntax_register_field(const char *name, uint8_t argn, uint8_t size, uint16_t offset) {
+    // 检查 name 参数有效性
+    if (!name || strlen(name) == 0) {
+        fprintf(stderr, "Field name cannot be empty\n");
+        return -1;  // 字段名称不能为空
+    }
+
+    // 检查 size 参数有效性
+    if (size != 1 && size != 2 && size != 4 && size != 8) {
+        fprintf(stderr, "Field size must be 1, 2, 4, or 8 bytes\n");
+        return -1;  // 字段大小不合法
+    }
+
     // 在全局字段链表中查找是否已存在同名字段
     if (bpf_field_attr_find(name)) {
         fprintf(stderr, "Field %s already registered\n", name);
@@ -523,15 +713,17 @@ struct bpf_syntax_node *bpf_syntax_node_new(struct bpf_compilation_context *cont
     switch (type) {
     case BPF_SYNTAX_NODE_FIELD:
         return bpf_syntax_field_node_new(str);
-    case BPF_SYNTAX_NODE_LABEL:
-        return bpf_syntax_label_node_new(bpf_asm_next_label_id(context));
+    case BPF_SYNTAX_NODE_IF:
+    case BPF_SYNTAX_NODE_IF_FALSE:
+        return bpf_syntax_if_node_new(type, str);
+        break;
     default:
         return bpf_syntax_node_generic_new(type, str);
     }
 }
 
 void bpf_syntax_node_free(struct bpf_compilation_context *context, struct bpf_syntax_node *node) {
-    bpf_syntax_tree_post_order(node, bpf_node_free, context);
+    bpf_syntax_tree_post_order(node, bpf_syntax_node_free_single, context);
 }
 
 int bpf_syntax_tree_post_order(struct bpf_syntax_node *node,
@@ -553,29 +745,60 @@ int bpf_syntax_tree_post_order(struct bpf_syntax_node *node,
     return callback(context, node);
 }
 
-void bpf_asm(struct bpf_compilation_context *context, struct bpf_syntax_node *node) {
+int bpf_asm(struct bpf_compilation_context *context, struct bpf_syntax_node *node) {
     // R0 为传的第一个参数，默认有一个参数
     context->reg_bitmap |= (1ULL << (BPF_REGISTER_R0 - BPF_REGISTER_R0));  // 标记 R0 为已使用
 
-    // 后序遍历语法树，生成 BPF 汇编代码
-    bpf_syntax_tree_post_order(node, bpf_node_asm, context);
-
-    // 最终将结果寄存器的值移动到 R0，然后返回
-    printf("%04hx: %-8s %s -> R0\n", bpf_asm_next_pc(context), "mov", bpf_register_name(node->reg));
-    printf("%04hx: %-8s\n", bpf_asm_next_pc(context), "ret");
-
-    // 打印 label 的跳转目标
-    for (struct bpf_list_node *node = context->pending_labels.next;
-         node != &context->pending_labels;
-         node = node->next) {
-        struct bpf_syntax_label_node *label =
-            bpf_container_of(node, struct bpf_syntax_label_node, list_hook);
-        assert(label->node.type == BPF_SYNTAX_NODE_LABEL);
-        assert(label->target);
-        struct bpf_syntax_node *left_most = bpf_syntax_true_left_most(label->target);
-        assert(left_most);
-        printf("%-16s %04hx\n", label->node.str, left_most->pc);
+    // 生成 BPF 汇编代码
+    if (bpf_asm_gen(context, node) < 0) {
+        fprintf(stderr, "Failed to generate BPF assembly code\n");
+        return -1;  // 生成失败
     }
+
+    // 获取比较操作符
+    const char *cmp_op;
+    if (node->type == BPF_SYNTAX_NODE_COMPARISON) {
+        cmp_op = node->str;  // 获取比较操作符
+    } else if (node->type == BPF_SYNTAX_NODE_IF || node->type == BPF_SYNTAX_NODE_IF_FALSE) {
+        assert(node->right && node->right->type == BPF_SYNTAX_NODE_COMPARISON);
+        cmp_op = node->right->str;  // 获取左子结点的比较操作符
+    } else {
+        fprintf(stderr, "Unsupported node type for comparison: %d\n", node->type);
+        return -1;  // 不支持的节点类型
+    }
+
+    // 根据比较操作符生成相应的跳转指令
+    if (strcmp(cmp_op, "==") == 0) {
+        uint32_t jne_instr = bpf_instrin_jne(2);  // 跳转到 false 分支
+        bpf_asm_append_instr(context, jne_instr);
+    } else if (strcmp(cmp_op, "!=") == 0) {
+        uint32_t je_instr = bpf_instrin_je(2);  // 跳转到 false 分支
+        bpf_asm_append_instr(context, je_instr);
+    } else {
+        fprintf(stderr, "Unsupported comparison operator: %s\n", node->str);
+        return -1;  // 不支持的比较运算符
+    }
+
+    // 创建返回指令
+    uint32_t ret_instr = bpf_instrin_ret();
+
+    // 最后的 true 分支指令
+    uint32_t set_true_instr = bpf_instrin_set(0, bpf_asm_register_id(BPF_REGISTER_R0), 1);
+    bpf_asm_append_instr(context, set_true_instr);
+    bpf_asm_append_instr(context, ret_instr);
+
+    // 最后的 false 分支指令
+    uint32_t set_false_instr = bpf_instrin_set(0, bpf_asm_register_id(BPF_REGISTER_R0), 0);
+    bpf_asm_append_instr(context, set_false_instr);
+    bpf_asm_append_instr(context, ret_instr);
+
+    // 遍历语法树，修正条件语句的跳转指令
+    if (bpf_syntax_tree_post_order(node, bpf_syntax_node_fix_if_jump, context) < 0) {
+        fprintf(stderr, "Failed to fix IF jump instructions\n");
+        return -1;  // 修正跳转指令失败
+    }
+
+    return 0;
 }
 
 /**
