@@ -46,42 +46,42 @@ static inline void bpf_instrin_execute_jmp(struct pbf_program *program, const ui
 }
 
 static inline void bpf_instrin_execute_je(struct pbf_program *program, const uint32_t *instr) {
-    const struct bpf_instrin_condition_jump *cj = (const struct bpf_instrin_condition_jump *)instr;
+    const struct bpf_instrin_jmp *cj = (const struct bpf_instrin_jmp *)instr;
     if (program->lcr == 0) {
         program->pc += cj->offset;
     }
 }
 
 static inline void bpf_instrin_execute_jne(struct pbf_program *program, const uint32_t *instr) {
-    const struct bpf_instrin_condition_jump *cj = (const struct bpf_instrin_condition_jump *)instr;
+    const struct bpf_instrin_jmp *cj = (const struct bpf_instrin_jmp *)instr;
     if (program->lcr != 0) {
         program->pc += cj->offset;
     }
 }
 
 static inline void bpf_instrin_execute_jg(struct pbf_program *program, const uint32_t *instr) {
-    const struct bpf_instrin_condition_jump *cj = (const struct bpf_instrin_condition_jump *)&instr;
+    const struct bpf_instrin_jmp *cj = (const struct bpf_instrin_jmp *)&instr;
     if (program->lcr > 0) {
         program->pc += cj->offset;
     }
 }
 
 static inline void bpf_instrin_execute_jl(struct pbf_program *program, const uint32_t *instr) {
-    const struct bpf_instrin_condition_jump *cj = (const struct bpf_instrin_condition_jump *)&instr;
+    const struct bpf_instrin_jmp *cj = (const struct bpf_instrin_jmp *)&instr;
     if (program->lcr < 0) {
         program->pc += cj->offset;
     }
 }
 
 static inline void bpf_instrin_execute_jng(struct pbf_program *program, const uint32_t *instr) {
-    const struct bpf_instrin_condition_jump *cj = (const struct bpf_instrin_condition_jump *)&instr;
+    const struct bpf_instrin_jmp *cj = (const struct bpf_instrin_jmp *)&instr;
     if (program->lcr <= 0) {
         program->pc += cj->offset;
     }
 }
 
 static inline void bpf_instrin_execute_jnl(struct pbf_program *program, const uint32_t *instr) {
-    const struct bpf_instrin_condition_jump *cj = (const struct bpf_instrin_condition_jump *)&instr;
+    const struct bpf_instrin_jmp *cj = (const struct bpf_instrin_jmp *)&instr;
     if (program->lcr >= 0) {
         program->pc += cj->offset;
     }

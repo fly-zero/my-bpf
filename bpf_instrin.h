@@ -93,26 +93,12 @@ BPF_STATIC_ASSERT(sizeof(struct bpf_instrin_cmp) == sizeof(uint32_t),
  * @brief 跳转指令
  */
 struct bpf_instrin_jmp {
-    uint32_t opcode :  6;  ///< 操作码 BPF_INSTRIN_JMP
+    uint32_t opcode :  6;  ///< 操作码 BPF_INSTRIN_J*
     uint32_t        : 10;  ///< 保留位
     uint32_t offset : 16;  ///< 跳转偏移量，可以为负数
 };
 
 BPF_STATIC_ASSERT(sizeof(struct bpf_instrin_jmp) == sizeof(uint32_t),
-                  instrin_struct_size_must_be_4_bytes);
-
-/**
- * @brief 跳转
- *
- * @note 根据跳转条件和 lcr 的值跳转 offset 个指令
- */
-struct bpf_instrin_condition_jump {
-    uint32_t opcode :  6;  ///< 操作码，BPF_INSTRIN_J*
-    uint32_t        : 10;  ///< 保留位
-    uint32_t offset : 16;  ///< 跳转偏移量，可以为负数
-};
-
-BPF_STATIC_ASSERT(sizeof(struct bpf_instrin_condition_jump) == sizeof(uint32_t),
                   instrin_struct_size_must_be_4_bytes);
 
 /**
@@ -201,7 +187,7 @@ static inline uint32_t bpf_instrin_jmp(uint32_t offset) {
  * @brief 创建一个 je 指令
  */
 static inline uint32_t bpf_instrin_je(uint32_t offset) {
-    struct bpf_instrin_condition_jump instr = {
+    struct bpf_instrin_jmp instr = {
         .opcode = BPF_INSTRIN_JE,
         .offset = offset,
     };
@@ -213,7 +199,7 @@ static inline uint32_t bpf_instrin_je(uint32_t offset) {
  * @brief 创建一个 jne 指令
  */
 static inline uint32_t bpf_instrin_jne(uint32_t offset) {
-    struct bpf_instrin_condition_jump instr = {
+    struct bpf_instrin_jmp instr = {
         .opcode = BPF_INSTRIN_JNE,
         .offset = offset,
     };
