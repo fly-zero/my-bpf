@@ -371,8 +371,8 @@ static int bpf_node_asm_if_false(struct bpf_compilation_context *context,
     // 设置 true_branch 和 false_branch
     struct bpf_syntax_if_node *if_node = (struct bpf_syntax_if_node *)node;
     struct bpf_syntax_node    *p       = bpf_syntax_find_parent(node, BPF_SYNTAX_NODE_IF_FALSE);
-    if_node->false_branch              = p ? p->right : NULL;
-    if_node->true_branch               = node->right;
+    if_node->true_branch               = p ? p->right : NULL;
+    if_node->false_branch              = node->right;
     assert(!p || p->type == BPF_SYNTAX_NODE_IF);
     return 0;
 }
@@ -516,15 +516,15 @@ static int bpf_syntax_node_fix_if_jump(struct bpf_compilation_context *context,
     } else if (node->type == BPF_SYNTAX_NODE_IF_FALSE) {
         // 获取 true_branch 的程序计数器
         struct bpf_syntax_if_node *if_node = (struct bpf_syntax_if_node *)node;
-        if (if_node->false_branch) {
+        if (if_node->true_branch) {
             // 修正 true_branch 的跳转偏移量
-            assert(if_node->false_branch->type == BPF_SYNTAX_NODE_COMPARISON);
-            struct bpf_syntax_node *left_most = bpf_syntax_true_left_most(if_node->false_branch);
+            assert(if_node->true_branch->type == BPF_SYNTAX_NODE_COMPARISON);
+            struct bpf_syntax_node *left_most = bpf_syntax_true_left_most(if_node->true_branch);
             uint32_t                offset    = left_most->pc - node->pc - 1;
             bpf_asm_set_jmp_offset(context->instrs + node->pc, offset);
         } else {
             // 直接跳转到程序末尾
-            uint32_t offset = context->next_pc - node->pc - 3;
+            uint32_t offset = context->next_pc - node->pc - 5;
             bpf_asm_set_jmp_offset(context->instrs + node->pc, offset);
         }
     }
