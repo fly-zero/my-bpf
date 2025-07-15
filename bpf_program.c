@@ -1,4 +1,4 @@
-#include "bpf_virtual_machine.h"
+#include "bpf_program.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -95,7 +95,7 @@ static inline void bpf_instrin_execute_ret(struct pbf_program *program, const ui
     program->pc = program->instrs_count;  // 设置 pc 到程序末尾，表示执行结束
 }
 
-struct pbf_program *bpf_new(const void *instrs, size_t count) {
+struct pbf_program *bpf_program_new(const void *instrs, size_t count) {
     if (!instrs || count == 0) {
         return NULL;
     }
@@ -117,7 +117,7 @@ struct pbf_program *bpf_new(const void *instrs, size_t count) {
     return program;
 }
 
-int bpf_execute(struct pbf_program *program, size_t argc, uint64_t argv[]) {
+int bpf_program_execute(struct pbf_program *program, size_t argc, uint64_t argv[]) {
     if (!program || (argc > 0 && !argv) || argc > 4) {
         return BPF_RESULT_INVALID_ARGUMENT;
     }
@@ -177,9 +177,9 @@ int bpf_execute(struct pbf_program *program, size_t argc, uint64_t argv[]) {
     return BPF_RESULT_OK;
 }
 
-unsigned long bpf_result(struct pbf_program *program) { return program->regs[0]; }
+unsigned long bpf_program_result(struct pbf_program *program) { return program->regs[0]; }
 
-void bpf_free(struct pbf_program *program) {
+void bpf_program_free(struct pbf_program *program) {
     if (!program) {
         return;
     }
