@@ -11,27 +11,6 @@
 
 #define bpf_container_of(ptr, type, member) ((type *)((char *)(ptr)-offsetof(type, member)))
 
-enum {
-    BPF_REGISTER_LCR,  ///< 上一次比较结果寄器
-    BPF_REGISTER_R0,
-    BPF_REGISTER_R1,
-    BPF_REGISTER_R2,
-    BPF_REGISTER_R3,
-    BPF_REGISTER_R4,
-    BPF_REGISTER_R5,
-    BPF_REGISTER_R6,
-    BPF_REGISTER_R7,
-    BPF_REGISTER_R8,
-    BPF_REGISTER_R9,
-    BPF_REGISTER_R10,
-    BPF_REGISTER_R11,
-    BPF_REGISTER_R12,
-    BPF_REGISTER_R13,
-    BPF_REGISTER_R14,
-    BPF_REGISTER_R15,
-    BPF_REGISTER_INVALID = -1,  ///< 无效寄存器
-};
-
 /**
  * @brief 链表节点结构体
  */
@@ -79,21 +58,6 @@ struct bpf_compilation_context {
     uint32_t *instrs;          ///< 指令数组
 };
 
-/**
- * @brief 寄存器编号到名称的映射
- */
-static const char *s_bpf_register_names[] = {
-    "CR",
-    "R0",
-    "R1",
-    "R2",
-    "R3",
-    "R4",
-    "R5",
-    "R6",
-    "R7",
-};
-
 static struct bpf_list_node s_bpf_field_attr_list = {
     .prev = &s_bpf_field_attr_list, .next = &s_bpf_field_attr_list};  ///< 全局字段链表头
 
@@ -109,15 +73,6 @@ static void bpf_list_unlink(struct bpf_list_node *node) {
     // 从链表中移除节点
     node->prev->next = node->next;
     node->next->prev = node->prev;
-}
-
-static const char *bpf_register_name(int reg) {
-    // 检查寄存器编号是否在有效范围内
-    if (reg < BPF_REGISTER_LCR || reg > BPF_REGISTER_R7) {
-        return "INVALID";
-    }
-
-    return s_bpf_register_names[reg];  // 返回寄存器名称
 }
 
 /**
@@ -745,7 +700,7 @@ int bpf_syntax_tree_post_order(struct bpf_syntax_node *node,
     return callback(context, node);
 }
 
-int bpf_asm(struct bpf_compilation_context *context, struct bpf_syntax_node *node) {
+int bpf_assemble(struct bpf_compilation_context *context, struct bpf_syntax_node *node) {
     // R0 为传的第一个参数，默认有一个参数
     context->reg_bitmap |= (1ULL << (BPF_REGISTER_R0 - BPF_REGISTER_R0));  // 标记 R0 为已使用
 
@@ -796,6 +751,29 @@ int bpf_asm(struct bpf_compilation_context *context, struct bpf_syntax_node *nod
     if (bpf_syntax_tree_post_order(node, bpf_syntax_node_fix_if_jump, context) < 0) {
         fprintf(stderr, "Failed to fix IF jump instructions\n");
         return -1;  // 修正跳转指令失败
+    }
+
+    return 0;
+}
+
+int bpf_disassemble(const struct bpf_compilation_context *context,
+                    void (*callback)(const char *, size_t, uint16_t, void *),
+                    void *arg) {
+    if (!context || !context->instrs || context->next_pc == 0) {
+        fprintf(stderr, "Invalid compilation context or no instructions to disassemble\n");
+        return -1;  // 无效的编译上下文或没有指令可
+    }
+
+    for (uint16_t pc = 0; pc < context->next_pc; pc++) {
+        char   buf[64];
+        size_t len = bpf_instrin_disassemble(buf, sizeof buf, context->instrs[pc]);
+        if (len == 0) {
+            fprintf(stderr, "Failed to disassemble instruction at PC %u\n", pc);
+            return -1;  // 指令反汇编失败
+        }
+
+        // 调用回调函数处理反汇编结果
+        callback(buf, len, pc, arg);
     }
 
     return 0;

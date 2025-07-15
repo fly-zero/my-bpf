@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -8,8 +9,28 @@ extern "C" {
 
 #define BPF_STATIC_ASSERT(COND, MSG) typedef char static_assertion_##MSG[(COND) ? 1 : -1]
 
+enum bpf_register_type {
+    BPF_REGISTER_LCR,  ///< 上一次比较结果寄器
+    BPF_REGISTER_R0,
+    BPF_REGISTER_R1,
+    BPF_REGISTER_R2,
+    BPF_REGISTER_R3,
+    BPF_REGISTER_R4,
+    BPF_REGISTER_R5,
+    BPF_REGISTER_R6,
+    BPF_REGISTER_R7,
+    BPF_REGISTER_R8,
+    BPF_REGISTER_R9,
+    BPF_REGISTER_R10,
+    BPF_REGISTER_R11,
+    BPF_REGISTER_R12,
+    BPF_REGISTER_R13,
+    BPF_REGISTER_R14,
+    BPF_REGISTER_R15,
+    BPF_REGISTER_INVALID = -1,  ///< 无效寄存器
+};
+
 enum bpf_instrin_type {
-    BPF_INSTRIN_MOV,   ///< 寄存器之间的移动指令
     BPF_INSTRIN_LOAD,  ///< 从内存中加载数据到寄存器
     BPF_INSTRIN_SET,   ///< 设置立即数到寄存器
     BPF_INSTRIN_CMP,   ///< 比较两个寄存器的值
@@ -22,6 +43,8 @@ enum bpf_instrin_type {
     BPF_INSTRIN_JNL,   ///< 大于等于跳转
     BPF_INSTRIN_RET,   ///< 返回
 };
+
+#define BPF_INSTRIN_OPCODE_MASK 0x3F
 
 /**
  * @brief 寄存器之间的移动指令
@@ -111,20 +134,6 @@ struct bpf_instrin_ret {
 
 BPF_STATIC_ASSERT(sizeof(struct bpf_instrin_ret) == sizeof(uint32_t),
                   instrin_struct_size_must_be_4_bytes);
-
-/** * @brief 创建一个 mov 指令
- *
- * @note 将寄存器 src 的值移动到寄存器 dst 中
- */
-static inline uint32_t bpf_instrin_mov(uint32_t dst, uint32_t src) {
-    struct bpf_instrin_mov instr = {
-        .opcode = BPF_INSTRIN_MOV,
-        .dst    = dst,
-        .src    = src,
-    };
-
-    return *(uint32_t *)&instr;
-}
 
 /**
  * @brief 创建一个 load 指令
@@ -217,6 +226,16 @@ static inline uint32_t bpf_instrin_ret() {
 
     return *(uint32_t *)&instr;
 }
+
+/**
+ * @brief 反汇编一条指令
+ *
+ * @param buff 输出缓冲区地址
+ * @param size 输出缓冲区大小
+ * @param instr 指令
+ * @return size_t 输出字符串长度
+ */
+size_t bpf_instrin_disassemble(char *buff, size_t size, uint32_t instr);
 
 #ifdef __cplusplus
 }

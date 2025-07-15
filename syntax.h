@@ -95,7 +95,19 @@ int bpf_syntax_tree_post_order(struct bpf_syntax_node *node,
  * @param node 语法树根节点
  * @return int 0 成功，-1 失败
  */
-int bpf_asm(struct bpf_compilation_context *context, struct bpf_syntax_node *node);
+int bpf_assemble(struct bpf_compilation_context *context, struct bpf_syntax_node *node);
+
+/**
+ * @brief 反汇编 BPF 程序
+ *
+ * @param context 编译上下文
+ * @param callback 回调函数，用于处理每条指令的反汇编结果
+ * @param arg 回调函数的参数
+ * @return int 0 成功，-1 失败
+ */
+int bpf_disassemble(const struct bpf_compilation_context *context,
+                    void (*callback)(const char *, size_t, uint16_t, void *),
+                    void *arg);
 
 #ifdef __cplusplus
 }

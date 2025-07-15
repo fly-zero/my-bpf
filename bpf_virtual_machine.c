@@ -43,6 +43,8 @@ static inline void bpf_instrin_execute_cmp(struct pbf_program *program, const ui
 }
 
 static inline void bpf_instrin_execute_jmp(struct pbf_program *program, const uint32_t *instr) {
+    const struct bpf_instrin_jmp *jmp = (const struct bpf_instrin_jmp *)instr;
+    program->pc += jmp->offset;
 }
 
 static inline void bpf_instrin_execute_je(struct pbf_program *program, const uint32_t *instr) {
@@ -89,7 +91,7 @@ static inline void bpf_instrin_execute_jnl(struct pbf_program *program, const ui
 
 static inline void bpf_instrin_execute_ret(struct pbf_program *program, const uint32_t *instr) {
     // 返回指令不需要做任何操作，直接返回即可
-    (void)instr;  // 避免未使用参数的警告
+    (void)instr;                          // 避免未使用参数的警告
     program->pc = program->instrs_count;  // 设置 pc 到程序末尾，表示执行结束
 }
 
@@ -131,52 +133,42 @@ int bpf_execute(struct pbf_program *program, size_t argc, uint64_t argv[]) {
     // 执行程序
     for (program->pc = 0; program->pc < program->instrs_count; ++program->pc) {
         unsigned instr  = instrs[program->pc];
-        unsigned opcode = instr >> 26;
+        unsigned opcode = instr & BPF_INSTRIN_OPCODE_MASK;
 
         switch (opcode) {
         case BPF_INSTRIN_LOAD:
             bpf_instrin_execute_load(program, &instrs[program->pc]);
             break;
-
         case BPF_INSTRIN_SET:
             bpf_instrin_execute_set(program, &instrs[program->pc]);
             break;
-
         case BPF_INSTRIN_CMP:
             bpf_instrin_execute_cmp(program, &instrs[program->pc]);
             break;
-
         case BPF_INSTRIN_JMP:
+            bpf_instrin_execute_jmp(program, &instrs[program->pc]);
             break;
-
         case BPF_INSTRIN_JE:
             bpf_instrin_execute_je(program, &instrs[program->pc]);
             break;
-
         case BPF_INSTRIN_JNE:
             bpf_instrin_execute_jne(program, &instrs[program->pc]);
             break;
-
         case BPF_INSTRIN_JG:
             bpf_instrin_execute_jg(program, &instrs[program->pc]);
             break;
-
         case BPF_INSTRIN_JL:
             bpf_instrin_execute_jl(program, &instrs[program->pc]);
             break;
-
         case BPF_INSTRIN_JNG:
             bpf_instrin_execute_jng(program, &instrs[program->pc]);
             break;
-
         case BPF_INSTRIN_JNL:
             bpf_instrin_execute_jnl(program, &instrs[program->pc]);
             break;
-
         case BPF_INSTRIN_RET:
             bpf_instrin_execute_ret(program, &instrs[program->pc]);
             return BPF_RESULT_OK;
-
         default:
             break;
         }

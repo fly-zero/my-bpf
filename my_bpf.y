@@ -87,18 +87,15 @@ constant
 
 struct bpf_syntax_node *parse_result = NULL;
 
-static void print_syntax_tree(struct bpf_syntax_node *node, int depth) {
-    if (!node) {
-        return;
-    }
-
-    bpf_asm(context, node); // 生成 BPF 汇编
-}
-
 static void register_global_field() {
     // 注册全局字段
     bpf_syntax_register_field("sport", 0, 2, 0);
     bpf_syntax_register_field("dport", 0, 2, 2);
+}
+
+static void disassemble_callback(const char *stmt, size_t length, uint16_t pc, void *arg) {
+    (void)arg;
+    printf("%04hx: %.*s\n", pc, (int)length, stmt);
 }
 
 int main() {
@@ -113,14 +110,11 @@ int main() {
     }
 
     // 解析输入
-    if (yyparse() == 0) {
-        printf("\nParsing successful!\n");
-        if (parse_result) {
-            printf("ASM:\n");
-            print_syntax_tree(parse_result, 0);
-        }
+    if (yyparse() == 0 && parse_result) {
+        bpf_assemble(context, parse_result);
+        bpf_disassemble(context, disassemble_callback, NULL);
     } else {
-        printf("Parsing failed!\n");
+        fprintf(stderr, "Parsing failed!\n");
     }
 
     // 释放语法树
