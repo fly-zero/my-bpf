@@ -1,4 +1,4 @@
-#include "syntax.h"
+#include "bpf_ast.h"
 
 #include <assert.h>
 #include <stdint.h>
@@ -22,7 +22,7 @@ struct bpf_list_node {
 /**
  * @brief 字段属性结构体
  */
-struct bpf_syntax_field_attr {
+struct bpf_ast_field_attr {
     struct bpf_list_node list_hook;  ///< 链表钩子，用于链表管理
     char                *name;       ///< 字段名称
     uint8_t              argn;       ///< 字段地址所在参数编号
@@ -33,18 +33,18 @@ struct bpf_syntax_field_attr {
 /**
  * @brief 字段节点结构体
  */
-struct bpf_syntax_field_node {
-    struct bpf_syntax_node              node;  ///< 基类
-    const struct bpf_syntax_field_attr *attr;  ///< 字段属性
+struct bpf_ast_field_node {
+    struct bpf_ast_node              node;  ///< 基类
+    const struct bpf_ast_field_attr *attr;  ///< 字段属性
 };
 
 /**
  * @brief 条件语句节点结构体
  */
-struct bpf_syntax_if_node {
-    struct bpf_syntax_node  node;          ///< 基类
-    struct bpf_syntax_node *true_branch;   ///< 真分支
-    struct bpf_syntax_node *false_branch;  ///< 假分支
+struct bpf_ast_if_node {
+    struct bpf_ast_node  node;          ///< 基类
+    struct bpf_ast_node *true_branch;   ///< 真分支
+    struct bpf_ast_node *false_branch;  ///< 假分支
 };
 
 /**
@@ -180,8 +180,8 @@ static int bpf_asm_register_id(int reg) {
  * @return 成功时返回 0，失败时返回 -1
  */
 static int bpf_node_asm_comparison(struct bpf_compilation_context *context,
-                                   struct bpf_syntax_node         *node) {
-    assert(node->type == BPF_SYNTAX_NODE_COMPARISON);
+                                   struct bpf_ast_node            *node) {
+    assert(node->type == BPF_AST_NODE_COMPARISON);
 
     // 添加指令到编译上下文
     uint32_t cmp_instr = bpf_instrin_cmp(bpf_asm_register_id(node->left->reg),
@@ -203,9 +203,8 @@ static int bpf_node_asm_comparison(struct bpf_compilation_context *context,
  * @param node 结点
  * @return 成功时返回 0，失败时返回 -1
  */
-static int bpf_node_asm_field(struct bpf_compilation_context *context,
-                              struct bpf_syntax_node         *node) {
-    assert(node->type == BPF_SYNTAX_NODE_FIELD);
+static int bpf_node_asm_field(struct bpf_compilation_context *context, struct bpf_ast_node *node) {
+    assert(node->type == BPF_AST_NODE_FIELD);
 
     // 从 reg_usage 找出可用的寄存器
     int reg = bpf_asm_register_alloc(context);
@@ -214,8 +213,8 @@ static int bpf_node_asm_field(struct bpf_compilation_context *context,
         return -1;
     }
 
-    struct bpf_syntax_field_node       *field = (struct bpf_syntax_field_node *)node;
-    const struct bpf_syntax_field_attr *attr  = field->attr;
+    struct bpf_ast_field_node       *field = (struct bpf_ast_field_node *)node;
+    const struct bpf_ast_field_attr *attr  = field->attr;
     assert(attr && ((attr->size - 1) & attr->size) == 0 && attr->size <= 8);
 
     // 添加指令到编译上下文
@@ -237,7 +236,7 @@ static int bpf_node_asm_field(struct bpf_compilation_context *context,
  * @return 成功时返回 0，失败时返回 -1
  */
 static int bpf_node_asm_constant(struct bpf_compilation_context *context,
-                                 struct bpf_syntax_node         *node) {
+                                 struct bpf_ast_node            *node) {
     // 从 reg_usage 找出可用的寄存器
     int reg = bpf_asm_register_alloc(context);
     if (reg < 0) {
@@ -262,8 +261,8 @@ static int bpf_node_asm_constant(struct bpf_compilation_context *context,
  * @param type 要查找的节点类型
  * @return 返回找到的父节点，如果没有找到则返回 NULL
  */
-static struct bpf_syntax_node *bpf_syntax_find_parent(struct bpf_syntax_node   *node,
-                                                      enum bpf_syntax_node_type type) {
+static struct bpf_ast_node *bpf_ast_find_parent(struct bpf_ast_node   *node,
+                                                enum bpf_ast_node_type type) {
     node = node->parent;
     while (node && node->type == type) {
         node = node->parent;  // 向上查找父节点
@@ -279,17 +278,17 @@ static struct bpf_syntax_node *bpf_syntax_find_parent(struct bpf_syntax_node   *
  * @param node 结点
  * @return int 成功时返回 0，失败时返回 -1
  */
-static int bpf_node_asm_if(struct bpf_compilation_context *context, struct bpf_syntax_node *node) {
-    assert(node->type == BPF_SYNTAX_NODE_IF);
+static int bpf_node_asm_if(struct bpf_compilation_context *context, struct bpf_ast_node *node) {
+    assert(node->type == BPF_AST_NODE_IF);
 
-    struct bpf_syntax_node *left = node->left;
-    const char             *cmp_op;
+    struct bpf_ast_node *left = node->left;
+    const char          *cmp_op;
 
     // 获取比较操作符
-    if (left->type == BPF_SYNTAX_NODE_COMPARISON) {
+    if (left->type == BPF_AST_NODE_COMPARISON) {
         cmp_op = left->str;
-    } else if (left->type == BPF_SYNTAX_NODE_IF || BPF_SYNTAX_NODE_IF_FALSE) {
-        assert(left->right && left->right->type == BPF_SYNTAX_NODE_COMPARISON);
+    } else if (left->type == BPF_AST_NODE_IF || BPF_AST_NODE_IF_FALSE) {
+        assert(left->right && left->right->type == BPF_AST_NODE_COMPARISON);
         cmp_op = left->right->str;
     } else {
         fprintf(stderr, "Unsupported left node type for IF: %d\n", left->type);
@@ -316,11 +315,11 @@ static int bpf_node_asm_if(struct bpf_compilation_context *context, struct bpf_s
     node->instr_len = 1;
 
     // 设置 true_branch 和 false_branch
-    struct bpf_syntax_if_node *if_node = (struct bpf_syntax_if_node *)node;
-    struct bpf_syntax_node    *p       = bpf_syntax_find_parent(node, BPF_SYNTAX_NODE_IF);
-    if_node->false_branch              = p ? p->right : NULL;
-    if_node->true_branch               = node->right;
-    assert(!p || p->type == BPF_SYNTAX_NODE_IF_FALSE);
+    struct bpf_ast_if_node *if_node = (struct bpf_ast_if_node *)node;
+    struct bpf_ast_node    *p       = bpf_ast_find_parent(node, BPF_AST_NODE_IF);
+    if_node->false_branch           = p ? p->right : NULL;
+    if_node->true_branch            = node->right;
+    assert(!p || p->type == BPF_AST_NODE_IF_FALSE);
     return 0;
 }
 
@@ -332,17 +331,17 @@ static int bpf_node_asm_if(struct bpf_compilation_context *context, struct bpf_s
  * @return int 成功时返回 0，失败时返回 -1
  */
 static int bpf_node_asm_if_false(struct bpf_compilation_context *context,
-                                 struct bpf_syntax_node         *node) {
-    assert(node->type == BPF_SYNTAX_NODE_IF_FALSE);
+                                 struct bpf_ast_node            *node) {
+    assert(node->type == BPF_AST_NODE_IF_FALSE);
 
-    struct bpf_syntax_node *left = node->left;
-    const char             *cmp_op;
+    struct bpf_ast_node *left = node->left;
+    const char          *cmp_op;
 
     // 获取比较操作符
-    if (left->type == BPF_SYNTAX_NODE_COMPARISON) {
+    if (left->type == BPF_AST_NODE_COMPARISON) {
         cmp_op = left->str;
-    } else if (left->type == BPF_SYNTAX_NODE_IF || BPF_SYNTAX_NODE_IF_FALSE) {
-        assert(left->right && left->right->type == BPF_SYNTAX_NODE_COMPARISON);
+    } else if (left->type == BPF_AST_NODE_IF || BPF_AST_NODE_IF_FALSE) {
+        assert(left->right && left->right->type == BPF_AST_NODE_COMPARISON);
         cmp_op = left->right->str;
     } else {
         fprintf(stderr, "Unsupported left node type for IF_FALSE: %d\n", left->type);
@@ -369,11 +368,11 @@ static int bpf_node_asm_if_false(struct bpf_compilation_context *context,
     node->instr_len = 1;
 
     // 设置 true_branch 和 false_branch
-    struct bpf_syntax_if_node *if_node = (struct bpf_syntax_if_node *)node;
-    struct bpf_syntax_node    *p       = bpf_syntax_find_parent(node, BPF_SYNTAX_NODE_IF_FALSE);
-    if_node->true_branch               = p ? p->right : NULL;
-    if_node->false_branch              = node->right;
-    assert(!p || p->type == BPF_SYNTAX_NODE_IF);
+    struct bpf_ast_if_node *if_node = (struct bpf_ast_if_node *)node;
+    struct bpf_ast_node    *p       = bpf_ast_find_parent(node, BPF_AST_NODE_IF_FALSE);
+    if_node->true_branch            = p ? p->right : NULL;
+    if_node->false_branch           = node->right;
+    assert(!p || p->type == BPF_AST_NODE_IF);
     return 0;
 }
 
@@ -384,9 +383,9 @@ static int bpf_node_asm_if_false(struct bpf_compilation_context *context,
  * @param node 结点
  * @return int 成功时返回 0，失败时返回 -1
  */
-static int bpf_asm_gen(struct bpf_compilation_context *context, struct bpf_syntax_node *node) {
+static int bpf_asm_gen(struct bpf_compilation_context *context, struct bpf_ast_node *node) {
     switch (node->type) {
-    case BPF_SYNTAX_NODE_COMPARISON:
+    case BPF_AST_NODE_COMPARISON:
         if (bpf_asm_gen(context, node->left) < 0) {
             return -1;  // 左子结点生成失败
         }
@@ -397,15 +396,15 @@ static int bpf_asm_gen(struct bpf_compilation_context *context, struct bpf_synta
 
         return bpf_node_asm_comparison(context, node);  // 生成比较操作的 BPF 汇编代码
 
-    case BPF_SYNTAX_NODE_FIELD:
+    case BPF_AST_NODE_FIELD:
         assert(!node->left && !node->right);       // 字段节点没有子结点
         return bpf_node_asm_field(context, node);  // 生成加载字段的
 
-    case BPF_SYNTAX_NODE_CONSTANT:
+    case BPF_AST_NODE_CONSTANT:
         assert(!node->left && !node->right);          // 常量节点没有子结点
         return bpf_node_asm_constant(context, node);  // 生成加载常量的 BPF 汇编代码
 
-    case BPF_SYNTAX_NODE_IF:
+    case BPF_AST_NODE_IF:
         assert(node->left && node->right);  // 条件语句节点必须有
         if (bpf_asm_gen(context, node->left) < 0) {
             return -1;  // 左子结点生成失败
@@ -421,7 +420,7 @@ static int bpf_asm_gen(struct bpf_compilation_context *context, struct bpf_synta
 
         return 0;  // 成功生成条件语句
 
-    case BPF_SYNTAX_NODE_IF_FALSE:
+    case BPF_AST_NODE_IF_FALSE:
         assert(node->left && node->right);  // 条件语句的否定节点必须有
         if (bpf_asm_gen(context, node->left) < 0) {
             return -1;  // 左子结点生成失败
@@ -450,8 +449,8 @@ static int bpf_asm_gen(struct bpf_compilation_context *context, struct bpf_synta
  * @param node 结点
  * @return int 成功时返回 0，失败时返回 -1
  */
-static int bpf_syntax_node_free_single(struct bpf_compilation_context *context,
-                                       struct bpf_syntax_node         *node) {
+static int bpf_ast_node_free_single(struct bpf_compilation_context *context,
+                                    struct bpf_ast_node            *node) {
     if (!node) {
         return 0;  // 如果节点为空，直接返回
     }
@@ -465,7 +464,7 @@ static int bpf_syntax_node_free_single(struct bpf_compilation_context *context,
 /**
  * @brief 查找语法树的最左结点
  */
-static struct bpf_syntax_node *bpf_syntax_true_left_most(struct bpf_syntax_node *node) {
+static struct bpf_ast_node *bpf_ast_true_left_most(struct bpf_ast_node *node) {
     // 查找左子树的最左结点
     while (node->left) {
         node = node->left;
@@ -493,34 +492,34 @@ static void bpf_asm_set_jmp_offset(uint32_t *instrs, uint16_t offset) {
  * @param node 结点
  * @return int 成功时返回 0，失败时返回 -1
  */
-static int bpf_syntax_node_fix_if_jump(struct bpf_compilation_context *context,
-                                       struct bpf_syntax_node         *node) {
+static int bpf_ast_node_fix_if_jump(struct bpf_compilation_context *context,
+                                    struct bpf_ast_node            *node) {
     if (!node) {
         return 0;  // 如果节点为空或不是条件语句节点，直接返回
     }
 
-    if (node->type == BPF_SYNTAX_NODE_IF) {
+    if (node->type == BPF_AST_NODE_IF) {
         // 获取 false_branch 的程序计数器
-        struct bpf_syntax_if_node *if_node = (struct bpf_syntax_if_node *)node;
+        struct bpf_ast_if_node *if_node = (struct bpf_ast_if_node *)node;
         if (if_node->false_branch) {
             // 修正 false_branch 的跳转偏移量
-            assert(if_node->false_branch->type == BPF_SYNTAX_NODE_COMPARISON);
-            struct bpf_syntax_node *left_most = bpf_syntax_true_left_most(if_node->false_branch);
-            uint32_t                offset    = left_most->pc - node->pc - 1;
+            assert(if_node->false_branch->type == BPF_AST_NODE_COMPARISON);
+            struct bpf_ast_node *left_most = bpf_ast_true_left_most(if_node->false_branch);
+            uint32_t             offset    = left_most->pc - node->pc - 1;
             bpf_asm_set_jmp_offset(context->instrs + node->pc, offset);
         } else {
             // 直接跳转到程序末尾
             uint32_t offset = context->next_pc - node->pc - 3;
             bpf_asm_set_jmp_offset(context->instrs + node->pc, offset);
         }
-    } else if (node->type == BPF_SYNTAX_NODE_IF_FALSE) {
+    } else if (node->type == BPF_AST_NODE_IF_FALSE) {
         // 获取 true_branch 的程序计数器
-        struct bpf_syntax_if_node *if_node = (struct bpf_syntax_if_node *)node;
+        struct bpf_ast_if_node *if_node = (struct bpf_ast_if_node *)node;
         if (if_node->true_branch) {
             // 修正 true_branch 的跳转偏移量
-            assert(if_node->true_branch->type == BPF_SYNTAX_NODE_COMPARISON);
-            struct bpf_syntax_node *left_most = bpf_syntax_true_left_most(if_node->true_branch);
-            uint32_t                offset    = left_most->pc - node->pc - 1;
+            assert(if_node->true_branch->type == BPF_AST_NODE_COMPARISON);
+            struct bpf_ast_node *left_most = bpf_ast_true_left_most(if_node->true_branch);
+            uint32_t             offset    = left_most->pc - node->pc - 1;
             bpf_asm_set_jmp_offset(context->instrs + node->pc, offset);
         } else {
             // 直接跳转到程序末尾
@@ -532,11 +531,11 @@ static int bpf_syntax_node_fix_if_jump(struct bpf_compilation_context *context,
     return 0;
 }
 
-static const struct bpf_syntax_field_attr *bpf_field_attr_find(const char *name) {
+static const struct bpf_ast_field_attr *bpf_field_attr_find(const char *name) {
     // 在全局字段链表中查找字段属性
     for (struct bpf_list_node *node = s_bpf_field_attr_list.next; node != &s_bpf_field_attr_list;
          node                       = node->next) {
-        struct bpf_syntax_field_attr *attr = (struct bpf_syntax_field_attr *)node;
+        struct bpf_ast_field_attr *attr = (struct bpf_ast_field_attr *)node;
         if (strcmp(attr->name, name) == 0) {
             return attr;  // 找到匹配的字段属性
         }
@@ -545,9 +544,9 @@ static const struct bpf_syntax_field_attr *bpf_field_attr_find(const char *name)
     return NULL;  // 未找到字段属性
 }
 
-static void bpf_syntax_node_init(struct bpf_syntax_node   *node,
-                                 enum bpf_syntax_node_type type,
-                                 char                     *str) {
+static void bpf_ast_node_init(struct bpf_ast_node   *node,
+                              enum bpf_ast_node_type type,
+                              char                  *str) {
     node->type      = type;
     node->reg       = BPF_REGISTER_INVALID;
     node->instr_len = 0;
@@ -558,34 +557,32 @@ static void bpf_syntax_node_init(struct bpf_syntax_node   *node,
     node->right     = NULL;
 }
 
-static struct bpf_syntax_node *bpf_syntax_field_node_new(char *str) {
+static struct bpf_ast_node *bpf_ast_field_node_new(char *str) {
     // 查找全局字段链表中是否已存在同名字段
-    const struct bpf_syntax_field_attr *attr = bpf_field_attr_find(str);
+    const struct bpf_ast_field_attr *attr = bpf_field_attr_find(str);
     if (!attr) {
         fprintf(stderr, "Field %s not registered\n", str);
         return NULL;  // 字段未注册
     }
 
-    struct bpf_syntax_field_node *p =
-        (struct bpf_syntax_field_node *)malloc(sizeof(struct bpf_syntax_field_node));
-    struct bpf_syntax_node *node = &p->node;                 // 将基类指针指向子类
-    bpf_syntax_node_init(node, BPF_SYNTAX_NODE_FIELD, str);  // 初始化节点
-    p->attr = attr;                                          // 设置字段属性
+    struct bpf_ast_field_node *p =
+        (struct bpf_ast_field_node *)malloc(sizeof(struct bpf_ast_field_node));
+    struct bpf_ast_node *node = &p->node;                 // 将基类指针指向子类
+    bpf_ast_node_init(node, BPF_AST_NODE_FIELD, str);  // 初始化节点
+    p->attr = attr;                                       // 设置字段属性
     return node;
 }
 
-static struct bpf_syntax_node *bpf_syntax_if_node_new(enum bpf_syntax_node_type type, char *str) {
-    struct bpf_syntax_if_node *p =
-        (struct bpf_syntax_if_node *)malloc(sizeof(struct bpf_syntax_if_node));
-    struct bpf_syntax_node *node = &p->node;  // 将基类指针指向子类
-    bpf_syntax_node_init(node, type, str);    // 初始化节点
+static struct bpf_ast_node *bpf_ast_if_node_new(enum bpf_ast_node_type type, char *str) {
+    struct bpf_ast_if_node *p    = (struct bpf_ast_if_node *)malloc(sizeof(struct bpf_ast_if_node));
+    struct bpf_ast_node    *node = &p->node;  // 将基类指针指向子类
+    bpf_ast_node_init(node, type, str);    // 初始化节点
     return node;
 }
 
-static struct bpf_syntax_node *bpf_syntax_node_generic_new(enum bpf_syntax_node_type type,
-                                                           char                     *str) {
-    struct bpf_syntax_node *node = (struct bpf_syntax_node *)malloc(sizeof(struct bpf_syntax_node));
-    bpf_syntax_node_init(node, type, str);  // 初始化节点
+static struct bpf_ast_node *bpf_ast_node_generic_new(enum bpf_ast_node_type type, char *str) {
+    struct bpf_ast_node *node = (struct bpf_ast_node *)malloc(sizeof(struct bpf_ast_node));
+    bpf_ast_node_init(node, type, str);  // 初始化节点
     return node;
 }
 
@@ -618,7 +615,7 @@ void bpf_compilation_context_free(struct bpf_compilation_context *context) {
     free(context);  // 释放编译上下文
 }
 
-int bpf_syntax_register_field(const char *name, uint8_t argn, uint8_t size, uint16_t offset) {
+int bpf_ast_register_field(const char *name, uint8_t argn, uint8_t size, uint16_t offset) {
     // 检查 name 参数有效性
     if (!name || strlen(name) == 0) {
         fprintf(stderr, "Field name cannot be empty\n");
@@ -638,8 +635,8 @@ int bpf_syntax_register_field(const char *name, uint8_t argn, uint8_t size, uint
     }
 
     // 创建新的字段属性
-    struct bpf_syntax_field_attr *new_attr =
-        (struct bpf_syntax_field_attr *)malloc(sizeof(struct bpf_syntax_field_attr));
+    struct bpf_ast_field_attr *new_attr =
+        (struct bpf_ast_field_attr *)malloc(sizeof(struct bpf_ast_field_attr));
     if (!new_attr) {
         fprintf(stderr, "Failed to allocate memory for field attribute\n");
         return -1;  // 内存分配失败
@@ -662,45 +659,45 @@ int bpf_syntax_register_field(const char *name, uint8_t argn, uint8_t size, uint
     return 0;  // 成功注册字段
 }
 
-struct bpf_syntax_node *bpf_syntax_node_new(struct bpf_compilation_context *context,
-                                            enum bpf_syntax_node_type       type,
-                                            char                           *str) {
+struct bpf_ast_node *bpf_ast_node_new(struct bpf_compilation_context *context,
+                                      enum bpf_ast_node_type          type,
+                                      char                           *str) {
     switch (type) {
-    case BPF_SYNTAX_NODE_FIELD:
-        return bpf_syntax_field_node_new(str);
-    case BPF_SYNTAX_NODE_IF:
-    case BPF_SYNTAX_NODE_IF_FALSE:
-        return bpf_syntax_if_node_new(type, str);
+    case BPF_AST_NODE_FIELD:
+        return bpf_ast_field_node_new(str);
+    case BPF_AST_NODE_IF:
+    case BPF_AST_NODE_IF_FALSE:
+        return bpf_ast_if_node_new(type, str);
         break;
     default:
-        return bpf_syntax_node_generic_new(type, str);
+        return bpf_ast_node_generic_new(type, str);
     }
 }
 
-void bpf_syntax_node_free(struct bpf_compilation_context *context, struct bpf_syntax_node *node) {
-    bpf_syntax_tree_post_order(node, bpf_syntax_node_free_single, context);
+void bpf_ast_node_free(struct bpf_compilation_context *context, struct bpf_ast_node *node) {
+    bpf_ast_tree_post_order(node, bpf_ast_node_free_single, context);
 }
 
-int bpf_syntax_tree_post_order(struct bpf_syntax_node *node,
-                               int (*callback)(struct bpf_compilation_context *,
-                                               struct bpf_syntax_node *),
-                               struct bpf_compilation_context *context) {
+int bpf_ast_tree_post_order(struct bpf_ast_node *node,
+                            int (*callback)(struct bpf_compilation_context *,
+                                            struct bpf_ast_node *),
+                            struct bpf_compilation_context *context) {
     if (!node) {
         return 0;
     }
 
-    if (bpf_syntax_tree_post_order(node->left, callback, context) < 0) {
+    if (bpf_ast_tree_post_order(node->left, callback, context) < 0) {
         return -1;
     }
 
-    if (bpf_syntax_tree_post_order(node->right, callback, context) < 0) {
+    if (bpf_ast_tree_post_order(node->right, callback, context) < 0) {
         return -1;
     }
 
     return callback(context, node);
 }
 
-int bpf_assemble(struct bpf_compilation_context *context, struct bpf_syntax_node *node) {
+int bpf_assemble(struct bpf_compilation_context *context, struct bpf_ast_node *node) {
     // R0 为传的第一个参数，默认有一个参数
     context->reg_bitmap |= (1ULL << (BPF_REGISTER_R0 - BPF_REGISTER_R0));  // 标记 R0 为已使用
 
@@ -712,10 +709,10 @@ int bpf_assemble(struct bpf_compilation_context *context, struct bpf_syntax_node
 
     // 获取比较操作符
     const char *cmp_op;
-    if (node->type == BPF_SYNTAX_NODE_COMPARISON) {
+    if (node->type == BPF_AST_NODE_COMPARISON) {
         cmp_op = node->str;  // 获取比较操作符
-    } else if (node->type == BPF_SYNTAX_NODE_IF || node->type == BPF_SYNTAX_NODE_IF_FALSE) {
-        assert(node->right && node->right->type == BPF_SYNTAX_NODE_COMPARISON);
+    } else if (node->type == BPF_AST_NODE_IF || node->type == BPF_AST_NODE_IF_FALSE) {
+        assert(node->right && node->right->type == BPF_AST_NODE_COMPARISON);
         cmp_op = node->right->str;  // 获取左子结点的比较操作符
     } else {
         fprintf(stderr, "Unsupported node type for comparison: %d\n", node->type);
@@ -748,7 +745,7 @@ int bpf_assemble(struct bpf_compilation_context *context, struct bpf_syntax_node
     bpf_asm_append_instr(context, ret_instr);
 
     // 遍历语法树，修正条件语句的跳转指令
-    if (bpf_syntax_tree_post_order(node, bpf_syntax_node_fix_if_jump, context) < 0) {
+    if (bpf_ast_tree_post_order(node, bpf_ast_node_fix_if_jump, context) < 0) {
         fprintf(stderr, "Failed to fix IF jump instructions\n");
         return -1;  // 修正跳转指令失败
     }
@@ -782,12 +779,12 @@ int bpf_disassemble(const struct bpf_compilation_context *context,
 /**
  * @brief 清理函数
  */
-__attribute__((destructor)) static void bpf_syntax_cleanup() {
+__attribute__((destructor)) static void bpf_ast_cleanup() {
     // 清理全局字段链表
     struct bpf_list_node *node = s_bpf_field_attr_list.next;
     while (node != &s_bpf_field_attr_list) {
-        struct bpf_syntax_field_attr *attr = (struct bpf_syntax_field_attr *)node;
-        node                               = node->next;
+        struct bpf_ast_field_attr *attr = (struct bpf_ast_field_attr *)node;
+        node                            = node->next;
         free(attr->name);  // 释放字段名称
         free(attr);        // 释放字段属性结构体
     }

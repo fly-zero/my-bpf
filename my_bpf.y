@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "syntax.h"
+#include "bpf_ast.h"
 
 extern int yylex();
 
@@ -12,17 +12,15 @@ extern int yylex_destroy();  // 添加词法分析器清理函数声明
 
 static void yyerror(const char *);
 
-static void print_syntax_tree(struct bpf_syntax_node *node, int depth);
-
-extern struct bpf_syntax_node *parse_result;
+extern struct bpf_ast_node *parse_result;
 
 static struct bpf_compilation_context *context = NULL;
 
 %}
 
 %union {
-    char *str;                        /* 字符串值，用于词法单元 */
-    struct bpf_syntax_node *node;     /* 语法树节点 */
+    char                *str;   /* 字符串值，用于词法单元 */
+    struct bpf_ast_node *node;  /* 语法树节点 */
 }
 
 %token <str> FIELD COMPARISON LOGICAL NUMBER
@@ -39,11 +37,11 @@ program
 
 expr
 : factor LOGICAL factor {
-    struct bpf_syntax_node *node;
+    struct bpf_ast_node *node;
     if (strcmp($2, "&&") == 0) {
-        node = bpf_syntax_node_new(context, BPF_SYNTAX_NODE_IF, $2);
+        node = bpf_ast_node_new(context, BPF_AST_NODE_IF, $2);
     } else if (strcmp($2, "||") == 0) {
-        node = bpf_syntax_node_new(context, BPF_SYNTAX_NODE_IF_FALSE, $2);
+        node = bpf_ast_node_new(context, BPF_AST_NODE_IF_FALSE, $2);
     } else {
         assert(0);
     }
@@ -60,7 +58,7 @@ expr
 
 factor
 : field COMPARISON constant {
-    struct bpf_syntax_node *node = bpf_syntax_node_new(context, BPF_SYNTAX_NODE_COMPARISON, $2);
+    struct bpf_ast_node *node = bpf_ast_node_new(context, BPF_AST_NODE_COMPARISON, $2);
     node->left = $1;
     node->right = $3;
     $1->parent = node;
@@ -73,24 +71,24 @@ factor
 
 field
 : FIELD {
-    struct bpf_syntax_node *node = bpf_syntax_node_new(context, BPF_SYNTAX_NODE_FIELD, $1);
+    struct bpf_ast_node *node = bpf_ast_node_new(context, BPF_AST_NODE_FIELD, $1);
     $$ = node;
 };
 
 constant
 : NUMBER {
-    struct bpf_syntax_node *node = bpf_syntax_node_new(context, BPF_SYNTAX_NODE_CONSTANT, $1);
+    struct bpf_ast_node *node = bpf_ast_node_new(context, BPF_AST_NODE_CONSTANT, $1);
     $$ = node;
 };
 
 %%
 
-struct bpf_syntax_node *parse_result = NULL;
+struct bpf_ast_node *parse_result = NULL;
 
 static void register_global_field() {
     // 注册全局字段
-    bpf_syntax_register_field("sport", 0, 2, 0);
-    bpf_syntax_register_field("dport", 0, 2, 2);
+    bpf_ast_register_field("sport", 0, 2, 0);
+    bpf_ast_register_field("dport", 0, 2, 2);
 }
 
 static void disassemble_callback(const char *stmt, size_t length, uint16_t pc, void *arg) {
@@ -119,7 +117,7 @@ int main() {
 
     // 释放语法树
     if (parse_result) {
-        bpf_syntax_node_free(context, parse_result);
+        bpf_ast_node_free(context, parse_result);
         parse_result = NULL;
     }
 
