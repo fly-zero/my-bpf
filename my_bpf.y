@@ -8,6 +8,8 @@
 
 extern int yylex();
 
+extern void yy_scan_string(const char *str);
+
 extern int yylex_destroy();  // 添加词法分析器清理函数声明
 
 static void yyerror(const char *);
@@ -128,7 +130,13 @@ static const char *get_swapped_comparison(const char *op) {
     return NULL;  // 未知操作符
 }
 
-int main() {
+int main(int argc, char **argv) {
+    // 检查命令行参数
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s <filter_expression>\n", argv[0]);
+        return 1;
+    }
+
     // 注册全局字段
     register_global_field();
 
@@ -138,6 +146,9 @@ int main() {
         fprintf(stderr, "Failed to create ast context.\n");
         return 1;
     }
+
+    // 使用命令行参数作为输入
+    yy_scan_string(argv[1]);
 
     // 解析输入
     if (yyparse() == 0 && parse_result) {
