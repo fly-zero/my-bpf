@@ -47,22 +47,6 @@ enum bpf_instrin_type {
 #define BPF_INSTRIN_OPCODE_MASK 0x3F
 
 /**
- * @brief 寄存器之间的移动指令
- *
- * @note 将寄存器 src 的值移动到寄存器 dst 中
- */
-struct bpf_instrin_mov {
-    uint32_t opcode : 6;  ///< 操作码 BPF_INSTRIN_MOV
-    uint32_t        : 2;  ///< 保留位
-    uint32_t dst    : 4;  ///< 目标寄存器
-    uint32_t src    : 4;  ///< 源寄存器
-    uint32_t        : 16; ///< 保留位
-};
-
-BPF_STATIC_ASSERT(sizeof(struct bpf_instrin_mov) == sizeof(uint32_t),
-                  instrin_struct_size_must_be_4_bytes);
-
-/**
  * @brief 从内存中加载数据到寄存器
  *
  * @note 从内存 [src + offset] 处加载 (1 << width) 字节数据到寄存器 dst 中

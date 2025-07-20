@@ -109,7 +109,11 @@ int main() {
 
     // 解析输入
     if (yyparse() == 0 && parse_result) {
+        printf("Compiling BPF program...\n");
         bpf_assemble(context, parse_result);
+        bpf_disassemble(context, disassemble_callback, NULL);
+        printf("\noptimizing BPF program...\n");
+        bpf_optimize(context);
         bpf_disassemble(context, disassemble_callback, NULL);
     } else {
         fprintf(stderr, "Parsing failed!\n");

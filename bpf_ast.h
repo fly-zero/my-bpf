@@ -104,6 +104,14 @@ int bpf_disassemble(const struct bpf_compilation_context *context,
                     void (*callback)(const char *, size_t, uint16_t, void *),
                     void *arg);
 
+
+/**
+ * @brief BPF 优化
+ *
+ * @param context 编译上下文，它包含了要优化的指令和其他信息
+ */
+int bpf_optimize(struct bpf_compilation_context *context);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1,5 +1,6 @@
 #include "bpf_ast.h"
 
+#include <alloca.h>
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -544,9 +545,7 @@ static const struct bpf_ast_field_attr *bpf_field_attr_find(const char *name) {
     return NULL;  // 未找到字段属性
 }
 
-static void bpf_ast_node_init(struct bpf_ast_node   *node,
-                              enum bpf_ast_node_type type,
-                              char                  *str) {
+static void bpf_ast_node_init(struct bpf_ast_node *node, enum bpf_ast_node_type type, char *str) {
     node->type      = type;
     node->reg       = BPF_REGISTER_INVALID;
     node->instr_len = 0;
@@ -567,16 +566,16 @@ static struct bpf_ast_node *bpf_ast_field_node_new(char *str) {
 
     struct bpf_ast_field_node *p =
         (struct bpf_ast_field_node *)malloc(sizeof(struct bpf_ast_field_node));
-    struct bpf_ast_node *node = &p->node;                 // 将基类指针指向子类
+    struct bpf_ast_node *node = &p->node;              // 将基类指针指向子类
     bpf_ast_node_init(node, BPF_AST_NODE_FIELD, str);  // 初始化节点
-    p->attr = attr;                                       // 设置字段属性
+    p->attr = attr;                                    // 设置字段属性
     return node;
 }
 
 static struct bpf_ast_node *bpf_ast_if_node_new(enum bpf_ast_node_type type, char *str) {
     struct bpf_ast_if_node *p    = (struct bpf_ast_if_node *)malloc(sizeof(struct bpf_ast_if_node));
     struct bpf_ast_node    *node = &p->node;  // 将基类指针指向子类
-    bpf_ast_node_init(node, type, str);    // 初始化节点
+    bpf_ast_node_init(node, type, str);       // 初始化节点
     return node;
 }
 
@@ -584,6 +583,141 @@ static struct bpf_ast_node *bpf_ast_node_generic_new(enum bpf_ast_node_type type
     struct bpf_ast_node *node = (struct bpf_ast_node *)malloc(sizeof(struct bpf_ast_node));
     bpf_ast_node_init(node, type, str);  // 初始化节点
     return node;
+}
+
+/**
+ * @brief 检查指令是否为 load 指令
+ */
+static int bpf_instrin_is_load(uint32_t instr) {
+    return (instr & BPF_INSTRIN_OPCODE_MASK) == BPF_INSTRIN_LOAD;
+}
+
+/**
+ * @brief 检查指令是否为 set 指令
+ */
+static int bpf_instrin_is_set(uint32_t instr) {
+    return (instr & BPF_INSTRIN_OPCODE_MASK) == BPF_INSTRIN_SET;
+}
+
+/**
+ * @brief 检查指令是否为跳转指令
+ */
+static int bpf_instrin_is_jmp(uint32_t instr) {
+    uint32_t opcode = instr & BPF_INSTRIN_OPCODE_MASK;
+    return BPF_INSTRIN_JMP <= opcode && opcode <= BPF_INSTRIN_JNL;
+};
+
+/**
+ * @brief 在指令索引数组 \b last_instr_pc 中查找与 \b target 相同的指令
+ *
+ * @param context 编译上下文
+ * @param last_instr 指令索引数组
+ * @param count 指令索引数组的长度
+ * @param target 要查找的目标指令
+ * @return uint32_t 如果找到相同的指令，返回指令索引值；否则返回 UINT16_MAX
+ */
+static uint32_t bpf_asm_find_same_instr(struct bpf_compilation_context *context,
+                                        const uint16_t                 *last_instr_pc,
+                                        uint16_t                        length,
+                                        uint32_t                        target) {
+    for (uint32_t i = 0; i < length; ++i) {
+        uint16_t pc = last_instr_pc[i];
+        assert(pc < context->next_pc);
+        if (context->instrs[pc] == target) {
+            return i;
+        }
+    }
+
+    return UINT32_MAX;
+}
+
+/**
+ * @brief 检查寄存器在指定的指令范围内是否被修改
+ *
+ * @param context 编译上下文
+ * @param reg 寄存器编号
+ * @param start_pc 起始程序计数器
+ * @param end_pc 结束程序计数器
+ * @return int
+ */
+static int bpf_asm_is_register_modified_between(struct bpf_compilation_context *context,
+                                                uint8_t                         reg,
+                                                uint16_t                        bgn_pc,
+                                                uint16_t                        end_pc) {
+    // 检查在 start_pc 和 end_pc 之间是否有修改 reg 的指令
+    for (uint16_t pc = bgn_pc; pc < end_pc; ++pc) {
+        uint32_t instr = context->instrs[pc];
+        if (bpf_instrin_is_load(instr)) {
+            struct bpf_instrin_load *load_instr = (struct bpf_instrin_load *)&instr;
+            if (load_instr->dst == bpf_asm_register_id(reg)) {
+                return 1;  // 找到修改 reg 的指令
+            }
+        } else if (bpf_instrin_is_set(instr)) {
+            struct bpf_instrin_set *set_instr = (struct bpf_instrin_set *)&instr;
+            if (set_instr->dst == bpf_asm_register_id(reg)) {
+                return 1;  // 找到修改 reg 的指令
+            }
+        }
+    }
+
+    return 0;  // 没有找到修改 reg 的指令
+}
+
+/**
+ * @brief 消除冗余的加载指令
+ *
+ * @param context 编译上下文
+ */
+static void bpf_asm_remove_redundant_loads(struct bpf_compilation_context *context) {
+    uint16_t *last_load_idx   = alloca(context->next_pc * sizeof(uint16_t));
+    uint16_t  last_load_cnt   = 0;
+    int       redundant_loads = 0;
+
+    // 找到冗余的加载指令
+    for (uint16_t pc = 0; pc < context->next_pc; pc++) {
+        uint32_t instr = context->instrs[pc];
+        if (bpf_instrin_is_load(instr)) {
+            // 检查是否是冗余的加载指令
+            uint32_t i = bpf_asm_find_same_instr(context, last_load_idx, last_load_cnt, instr);
+            if (i < last_load_cnt) {  // 找到冗余的加载指令
+                uint16_t                 last_load_pc = last_load_idx[i];
+                struct bpf_instrin_load *load_instr   = (struct bpf_instrin_load *)&instr;
+                if (!bpf_asm_is_register_modified_between(
+                        context, load_instr->dst, last_load_pc + 1, pc)) {
+                    context->instrs[pc] = -1u;  // 标记为冗余指令
+                    ++redundant_loads;
+                } else {
+                    // 如果有修改，则更新 last_load_idx
+                    last_load_idx[i] = pc;  // 更新最后一个加载指令位置
+                }
+            } else {                                  // 没有找到冗余的加载指令
+                last_load_idx[last_load_cnt++] = pc;  // 记录加载指令位置
+            }
+        }
+    }
+
+    // 移除冗余的加载指令
+    for (int pc = context->next_pc - 1; pc >= 0 && redundant_loads >= 0; --pc) {
+        if (context->instrs[pc] == -1u) {  // 如果是冗余指令
+            // 将 [0, pc) 之间的跳转目的大于 pc 的跳转指令 offset 减少 1
+            for (uint16_t i = 0; i < pc; ++i) {
+                if (bpf_instrin_is_jmp(context->instrs[i])) {
+                    struct bpf_instrin_jmp *jmp_instr =
+                        (struct bpf_instrin_jmp *)&context->instrs[i];
+                    if (i + jmp_instr->offset > pc) {
+                        --jmp_instr->offset;  // 减少跳转偏移量
+                    }
+                }
+            }
+
+            // 将 [pc + 1, next_pc) 之间的指令向前移动一位
+            memmove(context->instrs + pc, context->instrs + pc + 1,
+                    (context->next_pc - pc - 1) * sizeof(uint32_t));
+
+            // 减少指令计数器
+            --context->next_pc;
+        }
+    }
 }
 
 struct bpf_compilation_context *bpf_compilation_context_new() {
@@ -772,6 +906,13 @@ int bpf_disassemble(const struct bpf_compilation_context *context,
         // 调用回调函数处理反汇编结果
         callback(buf, len, pc, arg);
     }
+
+    return 0;
+}
+
+int bpf_optimize(struct bpf_compilation_context *context) {
+    // 移除冗余的加载指令
+    bpf_asm_remove_redundant_loads(context);
 
     return 0;
 }
