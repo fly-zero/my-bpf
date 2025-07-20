@@ -12,7 +12,9 @@ extern int yylex_destroy();  // 添加词法分析器清理函数声明
 
 static void yyerror(const char *);
 
-extern struct bpf_ast_node *parse_result;
+static const char *get_swapped_comparison(const char *op);
+
+static struct bpf_ast_node *parse_result;
 
 static struct bpf_compilation_context *context = NULL;
 
@@ -64,7 +66,17 @@ factor
     $1->parent = node;
     $3->parent = node;
     $$ = node;
-    }
+}
+| constant COMPARISON field {
+    const char *swapped_op = get_swapped_comparison($2);
+    struct bpf_ast_node *node = bpf_ast_node_new(context, BPF_AST_NODE_COMPARISON, strdup(swapped_op));
+    node->left = $3;
+    node->right = $1;
+    $3->parent = node;
+    $1->parent = node;
+    $$ = node;
+    free($2);
+}
 | '(' expr ')' {
     $$ = $2;
 };
@@ -83,8 +95,6 @@ constant
 
 %%
 
-struct bpf_ast_node *parse_result = NULL;
-
 static void register_global_field() {
     // 注册全局字段
     bpf_ast_register_field("sport", 0, 2, 0);
@@ -94,6 +104,28 @@ static void register_global_field() {
 static void disassemble_callback(const char *stmt, size_t length, uint16_t pc, void *arg) {
     (void)arg;
     printf("%04hx: %.*s\n", pc, (int)length, stmt);
+}
+
+static void yyerror(const char *s) {
+    fprintf(stderr, "Error: %s\n", s);
+}
+
+static const char *get_swapped_comparison(const char *op) {
+    if (strcmp(op, "==") == 0) {
+        return "==";
+    } else if (strcmp(op, "!=") == 0) {
+        return "!=";
+    } else if (strcmp(op, "<") == 0) {
+        return ">";
+    } else if (strcmp(op, ">") == 0) {
+        return "<";
+    } else if (strcmp(op, "<=") == 0) {
+        return ">=";
+    } else if (strcmp(op, ">=") == 0) {
+        return "<=";
+    }
+
+    return NULL;  // 未知操作符
 }
 
 int main() {
@@ -133,8 +165,4 @@ int main() {
     yylex_destroy();
 
     return 0;
-}
-
-static void yyerror(const char *s) {
-    fprintf(stderr, "Error: %s\n", s);
 }
