@@ -16,7 +16,7 @@ static const char *get_swapped_comparison(const char *op);
 
 static struct bpf_ast_node *parse_result;
 
-static struct bpf_compilation_context *context = NULL;
+static struct bpf_ast_context *context = NULL;
 
 %}
 
@@ -133,9 +133,9 @@ int main() {
     register_global_field();
 
     // 创建编译上下文
-    context = bpf_compilation_context_new();
+    context = bpf_ast_context_new();
     if (!context) {
-        fprintf(stderr, "Failed to create compilation context.\n");
+        fprintf(stderr, "Failed to create ast context.\n");
         return 1;
     }
 
@@ -158,7 +158,7 @@ int main() {
     }
 
     // 释放编译上下文
-    bpf_compilation_context_free(context);
+    bpf_ast_context_free(context);
     context = NULL;
 
     // 清理词法分析器分配的缓冲区

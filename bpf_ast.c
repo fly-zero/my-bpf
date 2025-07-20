@@ -51,7 +51,7 @@ struct bpf_ast_if_node {
 /**
  * @brief 编译上下文结构体
  */
-struct bpf_compilation_context {
+struct bpf_ast_context {
     uint64_t  reg_bitmap;      ///< 寄存器分配位图
     uint16_t  next_label_id;   ///< 下一个标签 ID，用于生成唯一标签名
     uint16_t  next_pc;         ///< 下一个程序计数器
@@ -82,7 +82,7 @@ static void bpf_list_unlink(struct bpf_list_node *node) {
  * @param reg_usage 寄存器使用情况
  * @return int 返回分配的寄存器编号，-1 表示没有可用寄存器
  */
-static int bpf_asm_register_alloc(struct bpf_compilation_context *context) {
+static int bpf_asm_register_alloc(struct bpf_ast_context *context) {
     // 查找第一个未使用的寄存器
     for (int i = 0; i < 64; i++) {
         uint64_t mask = 1ULL << i;
@@ -101,7 +101,7 @@ static int bpf_asm_register_alloc(struct bpf_compilation_context *context) {
  * @param reg_usage 寄存器使用情况
  * @param reg 寄存器编号
  */
-static void bpf_asm_register_free(struct bpf_compilation_context *context, int reg) {
+static void bpf_asm_register_free(struct bpf_ast_context *context, int reg) {
     assert(reg >= BPF_REGISTER_R0 && reg <= BPF_REGISTER_R7);
     uint64_t mask = 1ULL << (reg - BPF_REGISTER_R0);
     context->reg_bitmap &= ~mask;  // 清除寄存器使用标记
@@ -124,7 +124,7 @@ static int bpf_asm_argn2reg(uint8_t argn) {
  * @param context 编译上下文
  * @return 成功时返回 0，失败时返回 -1
  */
-static int bpf_asm_expand_instrs(struct bpf_compilation_context *context) {
+static int bpf_asm_expand_instrs(struct bpf_ast_context *context) {
     if (context->next_pc >= UINT16_MAX) {
         fprintf(stderr, "Instruction length exceeds maximum limit\n");
         return -1;  // 指令长度超过最大限制
@@ -153,7 +153,7 @@ static int bpf_asm_expand_instrs(struct bpf_compilation_context *context) {
  * @param instr 要追加的指令
  * @return int 成功时返回指令的指令计数器位置；失败时返回 -1
  */
-static int bpf_asm_append_instr(struct bpf_compilation_context *context, uint32_t instr) {
+static int bpf_asm_append_instr(struct bpf_ast_context *context, uint32_t instr) {
     // 扩展指令数组容量
     if (bpf_asm_expand_instrs(context) < 0) {
         return -1;  // 扩展失败
@@ -180,8 +180,7 @@ static int bpf_asm_register_id(int reg) {
  * @param node 结点
  * @return 成功时返回 0，失败时返回 -1
  */
-static int bpf_node_asm_comparison(struct bpf_compilation_context *context,
-                                   struct bpf_ast_node            *node) {
+static int bpf_node_asm_comparison(struct bpf_ast_context *context, struct bpf_ast_node *node) {
     assert(node->type == BPF_AST_NODE_COMPARISON);
 
     // 添加指令到编译上下文
@@ -204,7 +203,7 @@ static int bpf_node_asm_comparison(struct bpf_compilation_context *context,
  * @param node 结点
  * @return 成功时返回 0，失败时返回 -1
  */
-static int bpf_node_asm_field(struct bpf_compilation_context *context, struct bpf_ast_node *node) {
+static int bpf_node_asm_field(struct bpf_ast_context *context, struct bpf_ast_node *node) {
     assert(node->type == BPF_AST_NODE_FIELD);
 
     // 从 reg_usage 找出可用的寄存器
@@ -236,8 +235,7 @@ static int bpf_node_asm_field(struct bpf_compilation_context *context, struct bp
  * @param constant 常量值
  * @return 成功时返回 0，失败时返回 -1
  */
-static int bpf_node_asm_constant(struct bpf_compilation_context *context,
-                                 struct bpf_ast_node            *node) {
+static int bpf_node_asm_constant(struct bpf_ast_context *context, struct bpf_ast_node *node) {
     // 从 reg_usage 找出可用的寄存器
     int reg = bpf_asm_register_alloc(context);
     if (reg < 0) {
@@ -279,7 +277,7 @@ static struct bpf_ast_node *bpf_ast_find_parent(struct bpf_ast_node   *node,
  * @param node 结点
  * @return int 成功时返回 0，失败时返回 -1
  */
-static int bpf_node_asm_if(struct bpf_compilation_context *context, struct bpf_ast_node *node) {
+static int bpf_node_asm_if(struct bpf_ast_context *context, struct bpf_ast_node *node) {
     assert(node->type == BPF_AST_NODE_IF);
 
     struct bpf_ast_node *left = node->left;
@@ -335,8 +333,7 @@ static int bpf_node_asm_if(struct bpf_compilation_context *context, struct bpf_a
  * @param node 结点
  * @return int 成功时返回 0，失败时返回 -1
  */
-static int bpf_node_asm_if_false(struct bpf_compilation_context *context,
-                                 struct bpf_ast_node            *node) {
+static int bpf_node_asm_if_false(struct bpf_ast_context *context, struct bpf_ast_node *node) {
     assert(node->type == BPF_AST_NODE_IF_FALSE);
 
     struct bpf_ast_node *left = node->left;
@@ -392,7 +389,7 @@ static int bpf_node_asm_if_false(struct bpf_compilation_context *context,
  * @param node 结点
  * @return int 成功时返回 0，失败时返回 -1
  */
-static int bpf_asm_gen(struct bpf_compilation_context *context, struct bpf_ast_node *node) {
+static int bpf_asm_gen(struct bpf_ast_context *context, struct bpf_ast_node *node) {
     switch (node->type) {
     case BPF_AST_NODE_COMPARISON:
         if (bpf_asm_gen(context, node->left) < 0) {
@@ -458,8 +455,7 @@ static int bpf_asm_gen(struct bpf_compilation_context *context, struct bpf_ast_n
  * @param node 结点
  * @return int 成功时返回 0，失败时返回 -1
  */
-static int bpf_ast_node_free_single(struct bpf_compilation_context *context,
-                                    struct bpf_ast_node            *node) {
+static int bpf_ast_node_free_single(struct bpf_ast_context *context, struct bpf_ast_node *node) {
     if (!node) {
         return 0;  // 如果节点为空，直接返回
     }
@@ -501,8 +497,7 @@ static void bpf_asm_set_jmp_offset(uint32_t *instrs, uint16_t offset) {
  * @param node 结点
  * @return int 成功时返回 0，失败时返回 -1
  */
-static int bpf_ast_node_fix_if_jump(struct bpf_compilation_context *context,
-                                    struct bpf_ast_node            *node) {
+static int bpf_ast_node_fix_if_jump(struct bpf_ast_context *context, struct bpf_ast_node *node) {
     if (!node) {
         return 0;  // 如果节点为空或不是条件语句节点，直接返回
     }
@@ -624,10 +619,10 @@ static int bpf_instrin_is_jmp(uint32_t instr) {
  * @param target 要查找的目标指令
  * @return uint32_t 如果找到相同的指令，返回指令索引值；否则返回 UINT16_MAX
  */
-static uint32_t bpf_asm_find_same_instr(struct bpf_compilation_context *context,
-                                        const uint16_t                 *last_instr_pc,
-                                        uint16_t                        length,
-                                        uint32_t                        target) {
+static uint32_t bpf_asm_find_same_instr(struct bpf_ast_context *context,
+                                        const uint16_t         *last_instr_pc,
+                                        uint16_t                length,
+                                        uint32_t                target) {
     for (uint32_t i = 0; i < length; ++i) {
         uint16_t pc = last_instr_pc[i];
         assert(pc < context->next_pc);
@@ -648,10 +643,10 @@ static uint32_t bpf_asm_find_same_instr(struct bpf_compilation_context *context,
  * @param end_pc 结束程序计数器
  * @return int
  */
-static int bpf_asm_is_register_modified_between(struct bpf_compilation_context *context,
-                                                uint8_t                         reg,
-                                                uint16_t                        bgn_pc,
-                                                uint16_t                        end_pc) {
+static int bpf_asm_is_register_modified_between(struct bpf_ast_context *context,
+                                                uint8_t                 reg,
+                                                uint16_t                bgn_pc,
+                                                uint16_t                end_pc) {
     // 检查在 start_pc 和 end_pc 之间是否有修改 reg 的指令
     for (uint16_t pc = bgn_pc; pc < end_pc; ++pc) {
         uint32_t instr = context->instrs[pc];
@@ -676,7 +671,7 @@ static int bpf_asm_is_register_modified_between(struct bpf_compilation_context *
  *
  * @param context 编译上下文
  */
-static void bpf_asm_remove_redundant_loads(struct bpf_compilation_context *context) {
+static void bpf_asm_remove_redundant_loads(struct bpf_ast_context *context) {
     uint16_t *last_load_idx   = alloca(context->next_pc * sizeof(uint16_t));
     uint16_t  last_load_cnt   = 0;
     int       redundant_loads = 0;
@@ -719,7 +714,8 @@ static void bpf_asm_remove_redundant_loads(struct bpf_compilation_context *conte
             }
 
             // 将 [pc + 1, next_pc) 之间的指令向前移动一位
-            memmove(context->instrs + pc, context->instrs + pc + 1,
+            memmove(context->instrs + pc,
+                    context->instrs + pc + 1,
                     (context->next_pc - pc - 1) * sizeof(uint32_t));
 
             // 减少指令计数器
@@ -728,11 +724,11 @@ static void bpf_asm_remove_redundant_loads(struct bpf_compilation_context *conte
     }
 }
 
-struct bpf_compilation_context *bpf_compilation_context_new() {
-    struct bpf_compilation_context *context =
-        (struct bpf_compilation_context *)malloc(sizeof(struct bpf_compilation_context));
+struct bpf_ast_context *bpf_ast_context_new() {
+    struct bpf_ast_context *context =
+        (struct bpf_ast_context *)malloc(sizeof(struct bpf_ast_context));
     if (!context) {
-        fprintf(stderr, "Failed to allocate memory for compilation context\n");
+        fprintf(stderr, "Failed to allocate memory for ast context\n");
         return NULL;  // 内存分配失败
     }
 
@@ -745,7 +741,7 @@ struct bpf_compilation_context *bpf_compilation_context_new() {
     return context;
 }
 
-void bpf_compilation_context_free(struct bpf_compilation_context *context) {
+void bpf_ast_context_free(struct bpf_ast_context *context) {
     if (!context) {
         return;  // 如果上下文为空，直接返回
     }
@@ -801,9 +797,9 @@ int bpf_ast_register_field(const char *name, uint8_t argn, uint8_t size, uint16_
     return 0;  // 成功注册字段
 }
 
-struct bpf_ast_node *bpf_ast_node_new(struct bpf_compilation_context *context,
-                                      enum bpf_ast_node_type          type,
-                                      char                           *str) {
+struct bpf_ast_node *bpf_ast_node_new(struct bpf_ast_context *context,
+                                      enum bpf_ast_node_type  type,
+                                      char                   *str) {
     switch (type) {
     case BPF_AST_NODE_FIELD:
         return bpf_ast_field_node_new(str);
@@ -816,14 +812,13 @@ struct bpf_ast_node *bpf_ast_node_new(struct bpf_compilation_context *context,
     }
 }
 
-void bpf_ast_node_free(struct bpf_compilation_context *context, struct bpf_ast_node *node) {
+void bpf_ast_node_free(struct bpf_ast_context *context, struct bpf_ast_node *node) {
     bpf_ast_tree_post_order(node, bpf_ast_node_free_single, context);
 }
 
 int bpf_ast_tree_post_order(struct bpf_ast_node *node,
-                            int (*callback)(struct bpf_compilation_context *,
-                                            struct bpf_ast_node *),
-                            struct bpf_compilation_context *context) {
+                            int (*callback)(struct bpf_ast_context *, struct bpf_ast_node *),
+                            struct bpf_ast_context *context) {
     if (!node) {
         return 0;
     }
@@ -839,7 +834,7 @@ int bpf_ast_tree_post_order(struct bpf_ast_node *node,
     return callback(context, node);
 }
 
-int bpf_assemble(struct bpf_compilation_context *context, struct bpf_ast_node *node) {
+int bpf_assemble(struct bpf_ast_context *context, struct bpf_ast_node *node) {
     // R0 为传的第一个参数，默认有一个参数
     context->reg_bitmap |= (1ULL << (BPF_REGISTER_R0 - BPF_REGISTER_R0));  // 标记 R0 为已使用
 
@@ -895,11 +890,11 @@ int bpf_assemble(struct bpf_compilation_context *context, struct bpf_ast_node *n
     return 0;
 }
 
-int bpf_disassemble(const struct bpf_compilation_context *context,
+int bpf_disassemble(const struct bpf_ast_context *context,
                     void (*callback)(const char *, size_t, uint16_t, void *),
                     void *arg) {
     if (!context || !context->instrs || context->next_pc == 0) {
-        fprintf(stderr, "Invalid compilation context or no instructions to disassemble\n");
+        fprintf(stderr, "Invalid ast context or no instructions to disassemble\n");
         return -1;  // 无效的编译上下文或没有指令可
     }
 
@@ -918,7 +913,7 @@ int bpf_disassemble(const struct bpf_compilation_context *context,
     return 0;
 }
 
-int bpf_optimize(struct bpf_compilation_context *context) {
+int bpf_optimize(struct bpf_ast_context *context) {
     // 移除冗余的加载指令
     bpf_asm_remove_redundant_loads(context);
 
