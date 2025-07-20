@@ -212,6 +212,54 @@ static inline uint32_t bpf_instrin_ret() {
 }
 
 /**
+ * @brief 创建一个 jg 指令
+ */
+static inline uint32_t bpf_instrin_jg(uint32_t offset) {
+    struct bpf_instrin_jmp instr = {
+        .opcode = BPF_INSTRIN_JG,
+        .offset = offset,
+    };
+
+    return *(uint32_t *)&instr;
+}
+
+/**
+ * @brief 创建一个 jl 指令
+ */
+static inline uint32_t bpf_instrin_jl(uint32_t offset) {
+    struct bpf_instrin_jmp instr = {
+        .opcode = BPF_INSTRIN_JL,
+        .offset = offset,
+    };
+
+    return *(uint32_t *)&instr;
+}
+
+/**
+ * @brief 创建一个 jng 指令
+ */
+static inline uint32_t bpf_instrin_jng(uint32_t offset) {
+    struct bpf_instrin_jmp instr = {
+        .opcode = BPF_INSTRIN_JNG,
+        .offset = offset,
+    };
+
+    return *(uint32_t *)&instr;
+}
+
+/**
+ * @brief 创建一个 jnl 指令
+ */
+static inline uint32_t bpf_instrin_jnl(uint32_t offset) {
+    struct bpf_instrin_jmp instr = {
+        .opcode = BPF_INSTRIN_JNL,
+        .offset = offset,
+    };
+
+    return *(uint32_t *)&instr;
+}
+
+/**
  * @brief 反汇编一条指令
  *
  * @param buff 输出缓冲区地址

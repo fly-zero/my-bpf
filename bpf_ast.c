@@ -297,22 +297,26 @@ static int bpf_node_asm_if(struct bpf_compilation_context *context, struct bpf_a
     }
 
     // 根据比较操作符生成相应的跳转指令
+    uint32_t jmp_instr;
     if (strcmp(cmp_op, "==") == 0) {
-        // 如果是等于比较，使用 je 指令
-        // TODO: 跳转目标需要修补
-        uint32_t jne_instr = bpf_instrin_jne(0);
-        node->pc           = bpf_asm_append_instr(context, jne_instr);
+        jmp_instr = bpf_instrin_jne(0);
     } else if (strcmp(cmp_op, "!=") == 0) {
-        // 如果是不等于比较，使用 jne 指令
-        // TODO: 跳转目标需要修补
-        uint32_t je_instr = bpf_instrin_je(0);
-        node->pc          = bpf_asm_append_instr(context, je_instr);
+        jmp_instr = bpf_instrin_je(0);
+    } else if (strcmp(cmp_op, "<") == 0) {
+        jmp_instr = bpf_instrin_jnl(0);
+    } else if (strcmp(cmp_op, "<=") == 0) {
+        jmp_instr = bpf_instrin_jg(0);
+    } else if (strcmp(cmp_op, ">") == 0) {
+        jmp_instr = bpf_instrin_jng(0);
+    } else if (strcmp(cmp_op, ">=") == 0) {
+        jmp_instr = bpf_instrin_jl(0);
     } else {
         fprintf(stderr, "Unsupported comparison operator: %s\n", left->str);
-        return -1;  // 不支持的比较运算符
+        return -1;
     }
 
-    // 设置当前节点的指令长度
+    // 添加跳转指令到编译上下文
+    node->pc        = bpf_asm_append_instr(context, jmp_instr);
     node->instr_len = 1;
 
     // 设置 true_branch 和 false_branch
@@ -350,22 +354,26 @@ static int bpf_node_asm_if_false(struct bpf_compilation_context *context,
     }
 
     // 根据比较操作符生成相应的跳转指令
+    uint32_t jmp_instr;
     if (strcmp(cmp_op, "==") == 0) {
-        // 如果是等于比较，使用 je 指令
-        // TODO: 跳转目标需要修补
-        uint32_t je_instr = bpf_instrin_je(0);
-        node->pc          = bpf_asm_append_instr(context, je_instr);
+        jmp_instr = bpf_instrin_je(0);
     } else if (strcmp(cmp_op, "!=") == 0) {
-        // 如果是不等于比较，使用 je 指令
-        // TODO: 跳转目标需要修补
-        uint32_t jne_instr = bpf_instrin_jne(0);
-        node->pc           = bpf_asm_append_instr(context, jne_instr);
+        jmp_instr = bpf_instrin_jne(0);
+    } else if (strcmp(cmp_op, "<") == 0) {
+        jmp_instr = bpf_instrin_jl(0);
+    } else if (strcmp(cmp_op, "<=") == 0) {
+        jmp_instr = bpf_instrin_jng(0);
+    } else if (strcmp(cmp_op, ">") == 0) {
+        jmp_instr = bpf_instrin_jg(0);
+    } else if (strcmp(cmp_op, ">=") == 0) {
+        jmp_instr = bpf_instrin_jnl(0);
     } else {
         fprintf(stderr, "Unsupported comparison operator: %s\n", left->str);
         return -1;  // 不支持的比较运算符
     }
 
-    // 设置当前节点的指令长度
+    // 添加跳转指令到编译上下文
+    node->pc        = bpf_asm_append_instr(context, jmp_instr);
     node->instr_len = 1;
 
     // 设置 true_branch 和 false_branch

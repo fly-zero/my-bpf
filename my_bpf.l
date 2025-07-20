@@ -20,6 +20,10 @@
 "dport" { yylval = strdup(yytext); return FIELD; }
 "=="    { yylval = strdup(yytext); return COMPARISON; }
 "!="    { yylval = strdup(yytext); return COMPARISON; }
+"<"     { yylval = strdup(yytext); return COMPARISON; }
+"<="    { yylval = strdup(yytext); return COMPARISON; }
+">"     { yylval = strdup(yytext); return COMPARISON; }
+">="    { yylval = strdup(yytext); return COMPARISON; }
 "&&"    { yylval = strdup(yytext); return LOGICAL; }
 "||"    { yylval = strdup(yytext); return LOGICAL; }
 [0-9]+  { yylval = strdup(yytext); return NUMBER; }
