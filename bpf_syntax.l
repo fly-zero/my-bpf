@@ -4,7 +4,7 @@
 
 #define YYSTYPE char *
 
-#include "my_bpf.tab.h"
+#include "bpf_syntax.tab.h"
 
 %}
 

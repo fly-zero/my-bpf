@@ -1,7 +1,10 @@
-all: bpf
+all: libbpf.so test_bpf
 
-bpf: my_bpf.yy.c my_bpf.tab.c bpf_ast.c bpf_instrin.c
-	gcc -o $@ -g3 $^
+libbpf.so: bpf_syntax.yy.c bpf_syntax.tab.c bpf_ast.c bpf_instrin.c bpf_program.c
+	gcc -o $@ -fPIC -shared -g3 $^
+
+test_bpf: main.c libbpf.so
+	gcc -o $@ $< -L. -lbpf -g3
 
 %.yy.c: %.l
 	flex -o $@ $<
@@ -11,4 +14,4 @@ bpf: my_bpf.yy.c my_bpf.tab.c bpf_ast.c bpf_instrin.c
 
 .PHONY: clean
 clean:
-	rm -f my_bpf.yy.c my_bpf.tab.c my_bpf.tab.h bpf
+	rm -f bpf_syntax.yy.c bpf_syntax.tab.c bpf_syntax.tab.h bpf test_bpf libbpf.so
